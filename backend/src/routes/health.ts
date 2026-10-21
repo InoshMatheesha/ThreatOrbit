@@ -18,13 +18,13 @@ export function healthRouter(info: HealthInfo = {}): Router {
     const dbConnected = mongoose.connection.readyState === 1;
     const status = info.service && !dbConnected ? 'degraded' : 'ok';
     if (!req.user) {
-      res.status(status === 'ok' ? 200 : 503).json({ data: { status, service: 'threat-intel-hub' } });
+      res.status(status === 'ok' ? 200 : 503).json({ data: { status, service: 'threatorbit' } });
       return;
     }
     res.json({
       data: {
         status,
-        service: 'threat-intel-hub',
+        service: 'threatorbit',
         uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
         time: new Date().toISOString(),
         enrichment: info.service

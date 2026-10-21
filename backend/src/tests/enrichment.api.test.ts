@@ -133,7 +133,7 @@ describe('enrichment API', () => {
     const csv = await agent.get(`/api/exports/${id}?format=csv`);
     expect(csv.status).toBe(200);
     expect(csv.headers['content-type']).toMatch(/text\/csv/);
-    expect(csv.headers['content-disposition']).toMatch(/attachment; filename="threat-intel-[0-9a-f]{8}-.*\.csv"/);
+    expect(csv.headers['content-disposition']).toMatch(/attachment; filename="threatorbit-[0-9a-f]{8}-.*\.csv"/);
     const lines = csv.text.replace(/^﻿/, '').trim().split('\r\n');
     const header = lines[0]!.split(',');
     expect(header.slice(0, 4)).toEqual(['batch_id', 'indicator', 'type', 'risk']);

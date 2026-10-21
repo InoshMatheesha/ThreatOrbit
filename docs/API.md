@@ -1,4 +1,4 @@
-# Threat Intel Hub API
+# ThreatOrbit API
 
 Base URL: `https://<your-site>/api` (local: `http://127.0.0.1:4000/api`). All bodies are JSON unless noted.
 

@@ -236,6 +236,35 @@ describe('parseIndicators (line mode)', () => {
     ]);
   });
 
+  it('splits lists of indicators separated by commas, semicolons, pipes or spaces', () => {
+    const r = parseIndicators(
+      '66.132.195.29,65.20.149.239,202.150.138.15\n8.8.8.8; evil[.]com | d41d8cd98f00b204e9800998ecf8427e\t1.1.1.1 , 66.132.195.29',
+    );
+    expect(r.entries.map((e) => [e.line, e.normalized])).toEqual([
+      [1, '66.132.195.29'],
+      [1, '65.20.149.239'],
+      [1, '202.150.138.15'],
+      [2, '8.8.8.8'],
+      [2, 'evil.com'],
+      [2, 'd41d8cd98f00b204e9800998ecf8427e'],
+      [2, '1.1.1.1'],
+      [2, '66.132.195.29'],
+    ]);
+    expect(r.stats).toMatchObject({ total: 8, valid: 8, invalid: 0, duplicates: 1, unique: 7 });
+    expect(r.entries[1]).toMatchObject({ original: '65.20.149.239', refanged: false });
+    expect(r.entries[4]).toMatchObject({ original: 'evil[.]com', refanged: true });
+  });
+
+  it('reports bad items in a list individually and keeps valid lines whole', () => {
+    const r = parseIndicators('8.8.8.8,999.1.1.1\nhttps://evil.com/a?x=1,2;3\nnot an ioc');
+    expect(r.entries.map((e) => [e.line, e.status, e.normalized ?? e.original])).toEqual([
+      [1, 'valid', '8.8.8.8'],
+      [1, 'invalid', '999.1.1.1'],
+      [2, 'valid', 'https://evil.com/a?x=1,2;3'],
+      [3, 'invalid', 'not an ioc'],
+    ]);
+  });
+
   it('never merges different indicator types', () => {
     // A URL and its host are different indicators.
     const r = parseIndicators('evil.com\nhttp://evil.com/');

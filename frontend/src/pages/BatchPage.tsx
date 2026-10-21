@@ -132,7 +132,7 @@ export function BatchPage({ id }: { id: string }) {
           <div className="mt-0.5 text-xs text-slate-500" title={dateTime(batch.createdAt)}>
             Started by {batch.createdBy?.name ?? 'unknown'} {relativeTime(batch.createdAt)} ·{' '}
             {batch.source.kind === 'file' ? `file ${batch.source.name}` : 'pasted text'} ·{' '}
-            {batch.mode === 'extract' ? 'extracted from text' : 'one per line'} · <span className="font-mono">{batch.id}</span>
+            {batch.mode === 'extract' ? 'extracted from text' : 'list'} · <span className="font-mono">{batch.id}</span>
             {batch.completedAt && ` · finished ${relativeTime(batch.completedAt)}`}
           </div>
         </div>

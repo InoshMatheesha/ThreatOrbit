@@ -28,9 +28,9 @@ export function LoginPage() {
         className="w-full max-w-sm space-y-4 rounded-md border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900"
       >
         <div className="flex items-center gap-2">
-          <img src="/favicon.svg" alt="" className="h-6 w-6" />
+          <img src="/logo.png" alt="" className="h-10 w-10" />
           <div>
-            <div className="text-sm font-semibold">Threat Intel Hub</div>
+            <div className="text-sm font-semibold">ThreatOrbit</div>
             <div className="text-xs text-slate-500">Sign in to continue</div>
           </div>
         </div>

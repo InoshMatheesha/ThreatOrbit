@@ -13,7 +13,7 @@ export function exportHandler(service: EnrichmentService, logger: Logger): Reque
     const { format } = querySchema.parse(req.query);
     const { batch, views } = await loadBatchWithViews(service, String(req.params.batchId));
     const stamp = new Date().toISOString().slice(0, 19).replaceAll(':', '-');
-    const name = `threat-intel-${batch._id.slice(0, 8)}-${stamp}.${format}`;
+    const name = `threatorbit-${batch._id.slice(0, 8)}-${stamp}.${format}`;
     await audit(logger, 'export.download', req.user!, batch._id, {
       format,
       indicators: views.length,

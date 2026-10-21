@@ -28,7 +28,7 @@ describe('authentication', () => {
     }
     const health = await request(h.app).get('/api/health');
     expect(health.status).toBe(200);
-    expect(health.body.data).toEqual({ status: 'ok', service: 'threat-intel-hub' }); // no internals when signed out
+    expect(health.body.data).toEqual({ status: 'ok', service: 'threatorbit' }); // no internals when signed out
     await h.service.stop();
   });
 
