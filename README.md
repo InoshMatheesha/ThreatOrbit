@@ -2,7 +2,18 @@
 
 Bulk IOC triage for SOC analysts. You paste hundreds of IPs, hashes, domains and URLs, or upload a TXT/CSV file. The app validates, refangs, classifies and deduplicates them locally, then enriches them across several threat intel providers in one go.
 
-> **Status: Stage 1 of 7 complete.** The local parser and preview API are done and tested. Provider enrichment, batches, the dashboard and exports are not built yet. See the [roadmap](#roadmap).
+> **Status: Stage 1 complete, Stage 2 in progress.** The local parser, the preview API and the bulk-input web UI with live preview are working. Provider enrichment, batches, the dashboard and exports are not built yet. See the [roadmap](#roadmap).
+
+## One-click start (Windows)
+
+Double-click **`Start Threat Intel Hub.bat`**.
+
+1. **Checks Node.js 20+.** If it's missing, it opens nodejs.org for you.
+2. **First run only: asks for your API keys.** It writes them to `backend\.env`, which is gitignored and stays on your PC. Press Enter to skip any provider.
+3. **Installs, builds and starts the app.** Your browser opens at <http://127.0.0.1:4000> once the server is ready.
+4. **Already running?** Double-clicking again just opens the browser.
+
+Keep the console window open while you use the app. Closing it stops the server. To change keys later, edit `backend\.env`.
 
 ## Stack
 
@@ -11,7 +22,7 @@ Bulk IOC triage for SOC analysts. You paste hundreds of IPs, hashes, domains and
 | Backend | Node.js 20+, Express 5, TypeScript, Zod, pino |
 | Parsing | `ipaddr.js`, `tldts` (Public Suffix List), WHATWG `URL`, Node UTS #46 IDNA, `csv-parse` |
 | Storage / queue | MongoDB, Redis + BullMQ (from Stage 2) |
-| Frontend | React + Vite + TypeScript + Tailwind (from Stage 2) |
+| Frontend | React 19, Vite, TypeScript, Tailwind CSS 4 |
 | Tests | Vitest + Supertest |
 
 ## Quick start
@@ -21,7 +32,8 @@ Bulk IOC triage for SOC analysts. You paste hundreds of IPs, hashes, domains and
 npm install
 cp backend/.env.example backend/.env
 
-npm run dev:backend        # API on http://127.0.0.1:4000
+npm run dev                # API on :4000 + UI with hot reload on http://127.0.0.1:5173
+npm run build && npm start # production build: UI + API together on http://127.0.0.1:4000
 npm test                   # all tests
 npm run typecheck
 npm run build
@@ -82,7 +94,7 @@ All of this runs offline. There is no DNS, no HTTP and no sockets, and a test en
 ## Roadmap
 
 1. ✅ Local parser, preview API and tests
-2. ⬜ Bulk-input UI (paste, upload, live preview) and the Batch/Indicator/EnrichmentResult MongoDB models
+2. 🟡 ~~Bulk-input UI (paste, drag-and-drop upload, live preview, filters, search, pagination, copy clean list)~~ done. Still to do: the Batch/Indicator/EnrichmentResult MongoDB models.
 3. ⬜ Provider adapters: VirusTotal, AbuseIPDB, AlienVault OTX, URLhaus, GreyNoise Community. Each with its own rate limits, timeouts, 429 handling, an "unconfigured" state and a separately labeled demo mode.
 4. ⬜ BullMQ batch processing, caching with TTL, cancel/retry, and progress via SSE. Includes a documented in-process fallback when Redis is unavailable (dev only).
 5. ⬜ Explainable risk rules, a display for provider disagreements, and the dashboard with filters and detail panel

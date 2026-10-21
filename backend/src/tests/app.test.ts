@@ -1,5 +1,10 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pino } from 'pino';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
+import { createApp } from '../app.js';
 import { loadConfig } from '../config/env.js';
 import { testApp } from './helpers.js';
 
@@ -66,5 +71,22 @@ describe('config', () => {
 
   it('rejects invalid values with a clear message', () => {
     expect(() => loadConfig({ MAX_BATCH_SIZE: '-1' })).toThrow(/MAX_BATCH_SIZE/);
+  });
+});
+
+describe('frontend hosting', () => {
+  it('serves the built UI and falls back to index.html, without shadowing API errors', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tih-ui-'));
+    fs.writeFileSync(path.join(dir, 'index.html'), '<!doctype html><div id="root"></div>');
+    const app = createApp(loadConfig({ NODE_ENV: 'test' }), pino({ level: 'silent' }), { staticDir: dir });
+
+    const root = await request(app).get('/');
+    expect(root.status).toBe(200);
+    expect(root.text).toContain('id="root"');
+    expect((await request(app).get('/batches/123')).text).toContain('id="root"');
+    const api = await request(app).get('/api/unknown');
+    expect(api.status).toBe(404);
+    expect(api.body.error.code).toBe('NOT_FOUND');
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
