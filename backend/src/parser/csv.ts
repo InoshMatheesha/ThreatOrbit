@@ -5,7 +5,8 @@ export interface CsvCell {
   value: string;
 }
 
-const HEADER_RE = /^(?:iocs?|indicators?|observables?|values?|ioc[ _-]?values?|ips?|ip[ _-]?address(?:es)?|domains?|urls?|hashes|hash|sha256|sha1|md5)$/i;
+const HEADER_RE =
+  /^(?:iocs?|indicators?|observables?|values?|ioc[ _-]?values?|ips?|ip[ _-]?address(?:es)?|domains?|urls?|hashes|hash|sha256|sha1|md5)$/i;
 
 /**
  * Turn CSV text into candidate cells. If the first row has a recognised header

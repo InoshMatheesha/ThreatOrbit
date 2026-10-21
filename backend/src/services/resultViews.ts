@@ -23,7 +23,6 @@ export interface ResultView {
   expiresAt?: Date;
   cacheStatus?: 'hit' | 'miss';
   error?: { kind: string; message: string; httpStatus?: number; at: Date };
-  synthetic: boolean;
 }
 
 export interface ItemView extends BatchItem {
@@ -39,7 +38,6 @@ export function toResultView(r: EnrichmentResultDoc): ResultView {
     provider: r.provider,
     status: r.status,
     attempts: r.attempts,
-    synthetic: r.synthetic,
     ...(r.outcome ? { outcome: r.outcome } : {}),
     ...(r.verdict ? { verdict: r.verdict } : {}),
     ...(r.summary ? { summary: r.summary } : {}),
@@ -62,7 +60,7 @@ export function buildItemViews(batch: BatchDoc, results: EnrichmentResultDoc[], 
 
   return batch.items.map((item) => {
     const own = byItem.get(item.index) ?? [];
-    const risk = assessRisk(item, own, batch.providers, rules, batch.demo);
+    const risk = assessRisk(item, own, batch.providers, rules);
     const views: Partial<Record<ProviderId, ResultView>> = {};
     for (const r of own) views[r.provider] = toResultView(r);
     let status: ItemView['status'];
@@ -100,7 +98,9 @@ export function filterItems(items: ItemView[], q: ItemQuery) {
         i.value.toLowerCase().includes(needle) ||
         i.display?.toLowerCase().includes(needle) ||
         i.originals.some((o) => o.toLowerCase().includes(needle)) ||
-        Object.values(i.results).some((r) => r?.summary?.toLowerCase().includes(needle) || r?.tags?.some((t) => t.toLowerCase().includes(needle)))),
+        Object.values(i.results).some(
+          (r) => r?.summary?.toLowerCase().includes(needle) || r?.tags?.some((t) => t.toLowerCase().includes(needle)),
+        )),
   );
 
   const dir = q.order === 'asc' ? 1 : -1;

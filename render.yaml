@@ -1,0 +1,46 @@
+# Render Blueprint for the Threat Intel Hub API.
+# Render -> New -> Blueprint -> pick this repository. Values marked `sync: false`
+# are prompted for in the Render dashboard and never stored in git.
+services:
+  - type: web
+    name: threatorbit-api
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci --include=dev && npm run build -w backend
+    startCommand: npm run start -w backend
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      # Vercel rewrite -> Render load balancer -> app
+      - key: TRUST_PROXY
+        value: '2'
+      # No Redis on the free plan: unfinished lookups resume from MongoDB after a restart.
+      - key: QUEUE_MODE
+        value: memory
+      - key: MONGODB_URI
+        sync: false
+      # Your Vercel site, e.g. https://threatorbit.vercel.app
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # First admin account, created on first start when no users exist.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_NAME
+        sync: false
+      - key: VIRUSTOTAL_API_KEY
+        sync: false
+      - key: ABUSEIPDB_API_KEY
+        sync: false
+      - key: OTX_API_KEY
+        sync: false
+      - key: URLHAUS_AUTH_KEY
+        sync: false

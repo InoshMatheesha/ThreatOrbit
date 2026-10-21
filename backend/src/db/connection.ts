@@ -3,7 +3,7 @@ import path from 'node:path';
 import mongoose from 'mongoose';
 import type { Logger } from 'pino';
 import type { AppConfig } from '../config/env.js';
-import { AuditEvent, Batch, EnrichmentResult, Indicator, ProviderUsage } from '../models/index.js';
+import { AuditEvent, Batch, EnrichmentResult, Indicator, ProviderUsage, Session, User } from '../models/index.js';
 
 export interface DatabaseHandle {
   mode: 'external' | 'embedded';
@@ -13,7 +13,7 @@ export interface DatabaseHandle {
 const DB_NAME = 'threat_intel_hub';
 
 async function syncIndexes() {
-  await Promise.all([Batch, EnrichmentResult, Indicator, AuditEvent, ProviderUsage].map((m) => m.syncIndexes()));
+  await Promise.all([Batch, EnrichmentResult, Indicator, AuditEvent, ProviderUsage, User, Session].map((m) => m.syncIndexes()));
 }
 
 /**

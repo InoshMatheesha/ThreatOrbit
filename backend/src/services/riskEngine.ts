@@ -24,7 +24,7 @@ export interface RiskAssessment {
 
 type ResultLike = Pick<
   EnrichmentResultDoc,
-  'provider' | 'status' | 'outcome' | 'verdict' | 'detections' | 'abuseConfidence' | 'metrics' | 'type' | 'synthetic'
+  'provider' | 'status' | 'outcome' | 'verdict' | 'detections' | 'abuseConfidence' | 'metrics' | 'type'
 >;
 
 const RANK: Record<Severity, number> = { high: 3, medium: 2, low: 1, none: 0 };
@@ -49,18 +49,16 @@ function signalFor(r: ResultLike, rules: RiskRules, names: Map<ProviderId, strin
   const name = names.get(r.provider) ?? r.provider;
   const metrics = r.metrics ?? {};
   switch (r.provider) {
-    case 'virustotal':
-    case 'demo': {
+    case 'virustotal': {
       const d = r.detections;
       const m = d?.malicious ?? 0;
-      const t = r.provider === 'demo' ? rules.demo : rules.virustotal[vtGroup(r.type)];
+      const t = rules.virustotal[vtGroup(r.type)];
       let severity = bucket(m, t);
       if (severity === 'none' && (d?.suspicious ?? 0) >= 3) severity = 'low';
-      const rule = r.provider === 'demo' ? 'demo rule' : `rule for ${TYPE_NOUN[vtGroup(r.type)]}`;
       return {
         provider: r.provider,
         severity,
-        reason: `${name}: ${m}/${d?.total ?? 0} engines malicious${d?.suspicious ? `, ${d.suspicious} suspicious` : ''} (${rule}: High >= ${t.high}, Medium >= ${t.medium})`,
+        reason: `${name}: ${m}/${d?.total ?? 0} engines malicious${d?.suspicious ? `, ${d.suspicious} suspicious` : ''} (rule for ${TYPE_NOUN[vtGroup(r.type)]}: High >= ${t.high}, Medium >= ${t.medium})`,
       };
     }
     case 'abuseipdb': {
@@ -95,15 +93,6 @@ function signalFor(r: ResultLike, rules: RiskRules, names: Map<ProviderId, strin
       }[kind];
       return { provider: r.provider, severity: rules.urlhaus[kind], reason: `${name}: ${text}` };
     }
-    case 'greynoise': {
-      if (r.verdict === 'malicious') {
-        return { provider: r.provider, severity: rules.greynoise.malicious, reason: `${name}: scanner classified malicious (opportunistic, not necessarily targeted)` };
-      }
-      if (r.verdict === 'suspicious') {
-        return { provider: r.provider, severity: rules.greynoise.suspicious, reason: `${name}: mass-scanning the internet, intent unknown` };
-      }
-      return { provider: r.provider, severity: 'none', reason: `${name}: ${r.verdict === 'benign' ? 'known benign service or scanner' : 'no malicious classification'}` };
-    }
   }
 }
 
@@ -112,17 +101,15 @@ function signalFor(r: ResultLike, rules: RiskRules, names: Map<ProviderId, strin
  * - The highest provider signal wins, and every contributing reason is listed.
  * - Timeouts, errors, missing records and pending lookups never count as clean.
  * - Low needs at least one provider that HAS a record and flags nothing significant.
- * - Synthetic (demo) results are only ever assessed inside demo batches.
  */
 export function assessRisk(
   item: Pick<BatchItem, 'type' | 'lookupEligible'>,
   results: ResultLike[],
   providers: ProviderSnapshot[],
   rules: RiskRules,
-  demo: boolean,
 ): RiskAssessment {
   const names = new Map(providers.map((p) => [p.id, p.name]));
-  const relevant = results.filter((r) => r.synthetic === demo);
+  const relevant = results;
   const coverage = { lookups: relevant.length, withRecord: 0, noRecord: 0, failed: 0, pending: 0, cancelled: 0 };
   const signals: RiskSignal[] = [];
   const clear: ProviderId[] = [];

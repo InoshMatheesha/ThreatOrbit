@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../config/env.js';
 import { abuseIpdb } from '../providers/adapters/abuseipdb.js';
-import { greyNoise } from '../providers/adapters/greynoise.js';
 import { alienVaultOtx } from '../providers/adapters/otx.js';
 import { urlhaus } from '../providers/adapters/urlhaus.js';
 import { virusTotal, vtUrlId } from '../providers/adapters/virustotal.js';
@@ -23,7 +22,11 @@ function harness(adapter: ProviderAdapter, respond: (url: string, init: RequestI
     return respond(url, init ?? {});
   });
   const http = createProviderHttp({ providerName: adapter.name, allowedHosts: adapter.allowedHosts, timeoutMs, fetchImpl });
-  return { calls, lookup: (value: string, type: Parameters<ProviderAdapter['lookup']>[0]['type']) => adapter.lookup({ value, type }, { apiKey: 'k3y', http }) };
+  return {
+    calls,
+    lookup: (value: string, type: Parameters<ProviderAdapter['lookup']>[0]['type']) =>
+      adapter.lookup({ value, type }, { apiKey: 'k3y', http }),
+  };
 }
 
 async function errorOf(p: Promise<unknown>): Promise<ProviderError> {
@@ -135,7 +138,9 @@ describe('VirusTotal adapter', () => {
 
   it('distinguishes zero detections from a missing record', async () => {
     const { lookup } = harness(virusTotal, () =>
-      jsonResponse(200, { data: { id: 'x', attributes: { last_analysis_stats: { malicious: 0, suspicious: 0, harmless: 70, undetected: 20 } } } }),
+      jsonResponse(200, {
+        data: { id: 'x', attributes: { last_analysis_stats: { malicious: 0, suspicious: 0, harmless: 70, undetected: 20 } } },
+      }),
     );
     expect(await lookup('example.com', 'domain')).toMatchObject({ outcome: 'found', verdict: 'no_detections' });
   });
@@ -144,7 +149,9 @@ describe('VirusTotal adapter', () => {
 describe('AbuseIPDB adapter', () => {
   it('returns the abuse confidence score', async () => {
     const { lookup, calls } = harness(abuseIpdb, () =>
-      jsonResponse(200, { data: { abuseConfidenceScore: 100, totalReports: 812, numDistinctUsers: 140, countryCode: 'CN', isWhitelisted: false } }),
+      jsonResponse(200, {
+        data: { abuseConfidenceScore: 100, totalReports: 812, numDistinctUsers: 140, countryCode: 'CN', isWhitelisted: false },
+      }),
     );
     const f = await lookup('1.2.3.4', 'ipv4');
     expect(f).toMatchObject({ verdict: 'malicious', abuseConfidence: 100, metrics: { totalReports: 812, country: 'CN' } });
@@ -217,33 +224,25 @@ describe('URLhaus adapter', () => {
   });
 });
 
-describe('GreyNoise adapter', () => {
-  it('treats 404 as not observed and RIOT as benign', async () => {
-    const missing = harness(greyNoise, () => jsonResponse(404, { noise: false, riot: false }));
-    expect(await missing.lookup('203.0.113.9', 'ipv4')).toMatchObject({ outcome: 'not_found', verdict: 'unknown' });
-    const riot = harness(greyNoise, () => jsonResponse(200, { noise: false, riot: true, classification: 'benign', name: 'Google' }));
-    expect(await riot.lookup('8.8.8.8', 'ipv4')).toMatchObject({ verdict: 'benign', summary: 'Known business service (Google)' });
-  });
-});
-
 describe('provider registry', () => {
   it('marks providers without credentials as unconfigured and never runs them', () => {
     const registry = new ProviderRegistry(loadConfig({ VIRUSTOTAL_API_KEY: 'vt', OTX_API_KEY: '  ' }));
     expect(registry.get('virustotal').state).toBe('ready');
     expect(registry.get('otx').state).toBe('unconfigured');
     expect(registry.get('abuseipdb').state).toBe('unconfigured');
-    expect(registry.forBatch(false).map((r) => r.adapter.id)).toEqual(['virustotal']);
-    expect(registry.forBatch(true).map((r) => r.adapter.id)).toEqual(['demo']);
+    expect(registry.ready().map((r) => r.adapter.id)).toEqual(['virustotal']);
   });
 
   it('can disable a configured provider', () => {
     const registry = new ProviderRegistry(loadConfig({ VIRUSTOTAL_API_KEY: 'vt', PROVIDERS_DISABLED: 'virustotal' }));
     expect(registry.get('virustotal').state).toBe('disabled');
-    expect(registry.forBatch(false)).toEqual([]);
+    expect(registry.ready()).toEqual([]);
   });
 
   it('applies per-provider rate limit overrides', () => {
-    const registry = new ProviderRegistry(loadConfig({ VIRUSTOTAL_API_KEY: 'vt', VIRUSTOTAL_REQUESTS_PER_MINUTE: '500', VIRUSTOTAL_DAILY_LIMIT: '20000' }));
+    const registry = new ProviderRegistry(
+      loadConfig({ VIRUSTOTAL_API_KEY: 'vt', VIRUSTOTAL_REQUESTS_PER_MINUTE: '500', VIRUSTOTAL_DAILY_LIMIT: '20000' }),
+    );
     expect(registry.get('virustotal').limits).toMatchObject({ requestsPerMinute: 500, dailyLimit: 20000 });
   });
 

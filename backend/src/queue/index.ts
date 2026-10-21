@@ -15,6 +15,8 @@ export async function createLookupQueue(config: AppConfig, logger: Logger): Prom
     return new BullMqLookupQueue(redisUrl, logger);
   }
   if (mode === 'bullmq') throw new Error(`QUEUE_MODE=bullmq but Redis is not reachable at ${redisUrl}`);
-  logger.warn('Redis not reachable: using the in-process DEVELOPMENT queue (jobs live in memory; unfinished lookups are resumed from MongoDB on restart)');
+  logger.warn(
+    'Redis not reachable: using the in-process DEVELOPMENT queue (jobs live in memory; unfinished lookups are resumed from MongoDB on restart)',
+  );
   return new MemoryLookupQueue();
 }

@@ -23,8 +23,14 @@ export interface ProviderSnapshot {
   name: string;
   state: ProviderState;
   supports: IndicatorType[];
-  synthetic: boolean;
   requestsPerMinute: number;
+}
+
+/** Who created a batch. Name and email are copied so history survives user changes. */
+export interface Actor {
+  id: string;
+  email: string;
+  name: string;
 }
 
 export interface LookupCounters {
@@ -41,10 +47,9 @@ export interface BatchDoc {
   _id: string;
   label?: string;
   status: BatchStatus;
-  demo: boolean;
   mode: ParseMode;
   source: { kind: 'text' | 'file'; name?: string; bytes?: number };
-  sessionId: string;
+  createdBy: Actor;
   totals: { indicators: number; eligible: number; ineligible: number; invalid: number; duplicates: number };
   counters: LookupCounters;
   /** Configuration snapshot at creation time: which providers ran and why others did not. */
@@ -71,10 +76,9 @@ const batchSchema = new Schema<BatchDoc>(
     _id: { type: String, required: true },
     label: { type: String, maxlength: 120 },
     status: { type: String, enum: BATCH_STATUSES, required: true },
-    demo: { type: Boolean, default: false },
     mode: { type: String, enum: ['lines', 'extract'], required: true },
     source: { kind: { type: String, required: true }, name: String, bytes: Number },
-    sessionId: { type: String, required: true },
+    createdBy: { _id: false, id: { type: String, required: true }, email: String, name: String },
     totals: { indicators: Number, eligible: Number, ineligible: Number, invalid: Number, duplicates: Number },
     counters: countersSchema,
     providers: [
@@ -84,7 +88,6 @@ const batchSchema = new Schema<BatchDoc>(
         name: String,
         state: String,
         supports: [String],
-        synthetic: Boolean,
         requestsPerMinute: Number,
       },
     ],
@@ -108,5 +111,6 @@ const batchSchema = new Schema<BatchDoc>(
 );
 batchSchema.index({ createdAt: -1 });
 batchSchema.index({ status: 1 });
+batchSchema.index({ 'createdBy.id': 1, createdAt: -1 });
 
 export const Batch = model<BatchDoc>('Batch', batchSchema);

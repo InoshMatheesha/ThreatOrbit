@@ -20,7 +20,10 @@ function StatusBadge({ entry }: { entry: ParsedEntry }) {
   }
   if (entry.duplicate) {
     return (
-      <span className="badge bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" title={`First seen on line ${entry.duplicateOfLine}`}>
+      <span
+        className="badge bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+        title={`First seen on line ${entry.duplicateOfLine}`}
+      >
         Dup of L{entry.duplicateOfLine}
       </span>
     );
@@ -61,10 +64,12 @@ export function PreviewTable({ entries }: { entries: ParsedEntry[] }) {
   const current = Math.min(page, pageCount - 1);
   const visible = rows.slice(current * PAGE_SIZE, (current + 1) * PAGE_SIZE);
 
-  const reset = <T,>(set: (v: T) => void) => (v: T) => {
-    set(v);
-    setPage(0);
-  };
+  const reset =
+    <T,>(set: (v: T) => void) =>
+    (v: T) => {
+      set(v);
+      setPage(0);
+    };
 
   return (
     <section className="rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">

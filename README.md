@@ -1,137 +1,166 @@
-# ThreatOrbit: Threat Intel Hub
+# Threat Intel Hub
 
-Bulk IOC triage for SOC analysts. Paste hundreds of IPs, hashes, domains and URLs (or drop a TXT/CSV file). The app validates, refangs, classifies and deduplicates them locally, then enriches them across **VirusTotal, AbuseIPDB, AlienVault OTX, URLhaus and GreyNoise** in one go, with an explainable risk level per indicator.
-
-## One-click start (Windows)
-
-Double-click **`Start Threat Intel Hub.bat`**.
-
-1. **Checks Node.js:** it needs Node.js 22.12 or newer, 64-bit. If Node is missing, it opens nodejs.org for you.
-2. **Asks for your API keys (first run only):** they are written to `backend\.env`, which is gitignored and stays on your PC. Press Enter to skip any provider.
-3. **Sets up the database and queue:** with Docker Desktop running, it starts MongoDB and Redis containers. Without Docker, the app starts its own local MongoDB and an in-process queue automatically. The first start downloads MongoDB, about 100 MB.
-4. **Installs, builds and starts:** your browser opens at <http://127.0.0.1:4000> once the app is ready. If the build fails because of a corrupted install, the launcher reinstalls once and retries.
-
-Keep the console window open while you work, because closing it stops the app. To change keys, edit `backend\.env` and restart.
-
-## Check that it really works
-
-1. **Test your keys:** open **Providers** and click **Test key** on each provider. Each one makes a single real lookup of `8.8.8.8` and should say *Key works*. A wrong key shows *rejected the API key*.
-2. **Try the flow without spending quota:** on **Investigate**, click **Load sample** → **Enrich** → tick **Demo mode** → **Run demo batch**. This exercises the whole pipeline with clearly labeled SYNTHETIC data.
-3. **Run a real batch:** click **Load sample** again → **Enrich**, tick the sharing confirmation, then **Start enrichment**.
-   - **What to expect:** the sample includes the harmless EICAR antivirus test file hashes (`44d886…`, `3395856…`, `275a02…`). VirusTotal flags these with dozens of engines, so they should come back **High**.
-   - **How long it takes:** VirusTotal's free tier allows 4 lookups per minute, so its column fills in over a few minutes. The other providers finish in seconds.
-4. **Compare with the source:** click any row, then **Open in VirusTotal ↗** (or AbuseIPDB / OTX / URLhaus), and compare the numbers with the provider's own website.
-5. **Export:** use **Export CSV** to get the results as a spreadsheet.
+Bulk IOC triage for SOC teams. Paste hundreds of IPs, hashes, domains and URLs, or upload a TXT/CSV file. Threat Intel Hub validates, refangs and deduplicates them, then enriches every indicator across **VirusTotal, AbuseIPDB, AlienVault OTX and URLhaus** in one batch, with an explainable risk level for each.
 
 ## Features
 
 | Area | What you get |
 |---|---|
-| **Input** | Paste or drag-and-drop `.txt`/`.csv`. Two modes: *one per line* (every line validated), or *extract from text* (paste an email or report and the IOCs are pulled out). Live preview with total / valid / invalid / duplicate / kept-local counts. |
-| **Parsing** | IPv4, IPv6, MD5, SHA-1, SHA-256, domains (including IDN/punycode) and http(s) URLs. Refangs `hxxp`, `[.]`, `(dot)` and similar. Strict normalization without merging distinct indicators, and line numbers are kept. Fully offline. |
-| **Safety** | Private/reserved IPs and internal domains (`.local`, `.corp`) are **never sent** to providers. Flags homograph domains, hidden zero-width characters, credentials in URLs, and octal or hex IP tricks. Every real batch requires an explicit third-party-sharing confirmation. |
-| **Providers** | Read-only lookups: nothing is ever uploaded or submitted for analysis. Each provider has its own rate limit, concurrency, timeout, retries with exponential backoff, `Retry-After`/HTTP 429 handling, and a daily-quota guard that persists across restarts. |
-| **Honest results** | A provider either has a record or not. Timeouts, auth failures, quota exhaustion and provider errors are shown as such and **never** counted as clean. |
-| **Risk** | High / Medium / Low / Unknown, using per-provider, per-indicator-type rules. Every level lists its reasons. Provider disagreement is called out explicitly. Low means "records exist, none flag it", never "safe". |
-| **Batches** | Background queue (BullMQ on Redis, or the in-process fallback). Live progress over Server-Sent Events, per-provider ETA, cancel, retry one or all failed lookups, and automatic resume after a restart. |
-| **Cache** | Fresh results (24 h by default) are reused instead of spending quota again, and marked as cached. |
-| **Dashboard** | Metrics, per-provider progress, and a results table with risk/type/provider/status/disagreement filters, search, sort and pagination. A detail panel shows every provider's evidence, tags, references and permalinks. |
-| **Exports** | CSV (one row per indicator × provider, formula-injection safe, Excel-friendly UTF-8) and JSON. Demo exports are labeled. |
-| **History and audit** | Batch history, an audit log (create, cancel, retry, export, delete, purge, key tests; never indicator values), automatic retention purge (30 days by default), and delete-one / delete-all controls. |
-| **Demo mode** | A synthetic provider for trying the workflow or training. Demo batches only ever contain synthetic results, and they are labeled everywhere. |
+| **Input** | Paste text or drag-and-drop `.txt`/`.csv` files. Two modes: one indicator per line, or extraction from free text such as emails and reports. A live preview shows total, valid, invalid, duplicate and kept-local counts. |
+| **Parsing** | IPv4, IPv6, MD5, SHA-1, SHA-256, domains (including IDN/punycode) and http(s) URLs. Refangs `hxxp`, `[.]` and `(dot)`. Normalizes strictly without merging distinct indicators, and keeps source line numbers. Fully offline. |
+| **Safety** | Private/reserved IPs and internal domains are never sent to providers. Flags homograph domains, invisible characters, credentials embedded in URLs, and numeric-host tricks. Every batch requires an explicit third-party-sharing confirmation. |
+| **Providers** | Read-only lookups: nothing is ever uploaded or submitted for analysis. Each provider gets its own rate limit, concurrency, timeout, exponential-backoff retries, `Retry-After`/HTTP 429 handling and a persistent daily-quota guard. |
+| **Honest results** | A provider either has a record or it doesn't. Timeouts, auth failures, quota exhaustion and provider errors are reported as such and never counted as clean. |
+| **Risk** | High / Medium / Low / Unknown, from per-provider, per-indicator-type rules that you can configure. Every level lists its reasons. Disagreement between providers is called out explicitly. |
+| **Batches** | Background queue (BullMQ on Redis, or in-process) with live progress, per-provider ETAs, cancel, retry one or all failed lookups, and automatic resume after a restart. Fresh results are cached for 24 h by default. |
+| **Dashboard** | Metrics, per-provider progress, and a results table filterable by risk, type, provider, status and disagreement, with search, sort and pagination. A detail panel shows every provider's evidence, tags, references and permalinks. |
+| **Exports** | CSV (one row per indicator × provider, protected against formula injection, Excel-friendly UTF-8) and JSON. |
+| **Team** | Accounts with **admin** and **analyst** roles. Analysts see the whole team's batches but can only change their own. Admins manage the team, view the audit log, test provider keys and can delete history. |
+| **Governance** | An audit log of who did what (sign-ins, batches, exports, retries, user changes). Data is purged automatically after 30 days by default. |
 
-## Run it manually (any OS)
+## Architecture
 
-```bash
-# Node.js 22.12+ required
-npm install
-cp backend/.env.example backend/.env      # then add your API keys
-
-docker compose up -d                      # optional: MongoDB + Redis. Without it, built-in fallbacks are used
-npm run build && npm start                # UI + API on http://127.0.0.1:4000
-
-npm run dev                               # development: API on :4000 + UI with hot reload on :5173
-npm test                                  # 151 automated tests (mocked providers, no real quota used)
-npm run typecheck
+```
+Browser ──> Vercel (React SPA, /api/* rewrite) ──> Render (Node.js API + queue workers) ──> MongoDB Atlas
+                                                              │
+                                                              └──> VirusTotal · AbuseIPDB · OTX · URLhaus
 ```
 
-The first `npm test` downloads a MongoDB binary for the test database. To use an existing one instead, set `MONGOMS_SYSTEM_BINARY=/path/to/mongod`. The BullMQ tests run when Redis is reachable at `REDIS_URL`, and are skipped otherwise.
+```
+frontend/         React 19 + Vite + Tailwind CSS 4
+  vercel.json     Vercel build, /api proxy rewrite, security headers
+backend/
+  src/parser/     offline IOC parser (validation, refang, IDN, dedupe, extraction, CSV)
+  src/providers/  one adapter per provider; allowlisted, timed HTTP client; registry
+  src/queue/      BullMQ (one queue + rate limiter per provider) or in-process queue
+  src/services/   enrichment, risk engine, auth, exports, audit, retention
+  src/models/     Batch, EnrichmentResult, Indicator, User, Session, AuditEvent, ProviderUsage
+render.yaml       Render Blueprint for the API
+docker-compose.yml MongoDB + Redis for local development
+```
+
+## Deploy (Vercel + Render + MongoDB Atlas)
+
+All three services have free tiers. Do the steps in this order.
+
+### 1. Database: MongoDB Atlas
+
+1. Create a free account at <https://www.mongodb.com/cloud/atlas/register> and create an **M0 (free)** cluster. AWS Singapore is a good region if you are in South Asia.
+2. Go to **Database Access** → **Add database user** and create a user with a strong password. This password is separate from your app login.
+3. Go to **Network Access** → **Add IP address** → **Allow access from anywhere** (`0.0.0.0/0`). Render's free plan has no fixed IP; access is still protected by the database password.
+4. Go to **Connect** → **Drivers** and copy the connection string. Add a database name before the `?`, like this:
+   `mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/threat_intel_hub?retryWrites=true&w=majority`
+
+### 2. Backend: Render
+
+1. Sign in at <https://render.com> with GitHub.
+2. Go to **New** → **Blueprint**, pick this repository, and click **Apply**. Render reads `render.yaml`.
+3. Render prompts for the secret values:
+
+| Variable | Value |
+|---|---|
+| `MONGODB_URI` | The Atlas connection string from step 1. |
+| `ALLOWED_ORIGINS` | Your Vercel URL, e.g. `https://threatorbit.vercel.app`. If you don't know it yet, leave it empty and come back after step 3. |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | Your first admin login. The password needs 12+ characters. |
+| `VIRUSTOTAL_API_KEY`, `ABUSEIPDB_API_KEY`, `OTX_API_KEY`, `URLHAUS_AUTH_KEY` | Your provider keys. |
+
+4. Wait for the deploy to finish, then open `https://<your-service>.onrender.com/api/health`. It should show `{"data":{"status":"ok",...}}`.
+5. Copy the service URL. If the name `threatorbit-api` was free, it is `https://threatorbit-api.onrender.com`.
+
+The free plan sleeps after 15 minutes without traffic, and the first request after that takes about 30 seconds while it wakes up. Unfinished lookups resume automatically when it wakes. For an always-on service, switch the plan to Starter.
+
+### 3. Frontend: Vercel
+
+1. If your Render URL is **not** `https://threatorbit-api.onrender.com`, edit `frontend/vercel.json`, put your URL in the `/api/:path*` rewrite, and commit the change.
+2. Sign in at <https://vercel.com> with GitHub and go to **Add New** → **Project** → import this repository.
+3. Set **Root Directory** to `frontend`. The build settings come from `frontend/vercel.json`, so leave them as they are. Click **Deploy**.
+4. Copy your site URL, e.g. `https://threatorbit.vercel.app`. On Render, set `ALLOWED_ORIGINS` to that URL; Render redeploys automatically.
+
+### 4. First sign-in
+
+1. Open your Vercel URL and sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+2. Open **Providers** and click **Test key** on each provider. Each should say *Key works*.
+3. Open **Team** → **Add member** to create accounts for your teammates. Share their temporary passwords privately; they can change them from the profile menu.
+4. You can now remove `ADMIN_PASSWORD` from Render if you like. It is only used while no users exist.
+
+Every later `git push` to the deployed branch redeploys both services automatically.
+
+## Local development
+
+```bash
+# Node.js 22.12+
+npm install
+cp backend/.env.example backend/.env   # set ADMIN_EMAIL, ADMIN_PASSWORD and your provider keys
+docker compose up -d                   # optional: MongoDB + Redis. Without it a local MongoDB starts automatically
+npm run dev                            # API on :4000, UI with hot reload on http://127.0.0.1:5173
+```
+
+| Command | Purpose |
+|---|---|
+| `npm run build && npm start` | Production build: UI and API together on <http://127.0.0.1:4000>. |
+| `npm test` | Automated test suite. Provider calls are mocked, and the database and queue are real. |
+| `npm run typecheck` | TypeScript checks for both packages. |
+| `npm run format` | Prettier. |
+
+The first `npm test` downloads a MongoDB binary for the test database. To use an existing one, set `MONGOMS_SYSTEM_BINARY`.
+
+## Configuration
+
+Every setting is an environment variable. See [`backend/.env.example`](backend/.env.example) for the full list with defaults. The ones that matter most in production:
+
+| Variable | Purpose |
+|---|---|
+| `NODE_ENV=production` | Secure (HTTPS-only) cookies, and no embedded database fallback. |
+| `MONGODB_URI` | MongoDB connection string. |
+| `REDIS_URL` + `QUEUE_MODE=bullmq` | Optional Redis (e.g. Upstash) for a durable job queue. The default `memory` queue resumes from MongoDB after a restart. |
+| `TRUST_PROXY` | Number of proxies in front of the app: `2` behind Vercel → Render. |
+| `ALLOWED_ORIGINS` | Your site URL(s), for the cross-site request check. |
+| `SESSION_TTL_HOURS` | How long a sign-in lasts. Default 12. |
+| `RETENTION_DAYS` / `AUDIT_RETENTION_DAYS` | Automatic data purge. Defaults are 30 and 180. |
+| `<PROVIDER>_REQUESTS_PER_MINUTE` / `<PROVIDER>_DAILY_LIMIT` | Raise these for paid API plans. |
+| `PROVIDERS_DISABLED` | Switch providers off, e.g. `otx,urlhaus`. |
 
 ## Providers
 
-| Provider | Indicator types | Free tier and default limits | Key |
+| Provider | Indicator types | Default limits (free tier) | Get a key |
 |---|---|---|---|
-| VirusTotal | IPv4, IPv6, domain, URL, MD5, SHA-1, SHA-256 | 4/min, 500/day | `VIRUSTOTAL_API_KEY` from <https://www.virustotal.com/gui/my-apikey> |
-| AbuseIPDB | IPv4, IPv6 | 1,000 checks/day (30/min locally) | `ABUSEIPDB_API_KEY` from <https://www.abuseipdb.com/account/api> |
-| AlienVault OTX | IPv4, IPv6, domain/hostname, URL, MD5, SHA-1, SHA-256 | 30/min locally | `OTX_API_KEY` from <https://otx.alienvault.com/api> |
-| URLhaus (abuse.ch) | URL, domain, IPv4 (host), MD5, SHA-256 (payload) | 30/min locally | `URLHAUS_AUTH_KEY` from <https://auth.abuse.ch/> |
-| GreyNoise Community | IPv4 | 10/min, 50/day locally | `GREYNOISE_API_KEY` from <https://viz.greynoise.io/signup> |
+| VirusTotal | IPv4, IPv6, domain, URL, MD5, SHA-1, SHA-256 | 4/min, 500/day | <https://www.virustotal.com/gui/my-apikey> |
+| AbuseIPDB | IPv4, IPv6 | 30/min, 1,000/day | <https://www.abuseipdb.com/account/api> |
+| AlienVault OTX | IPv4, IPv6, domain, URL, MD5, SHA-1, SHA-256 | 30/min | <https://otx.alienvault.com/api> |
+| URLhaus | URL, domain, IPv4, MD5, SHA-256 | 30/min | <https://auth.abuse.ch/> |
 
-- **Paid plans:** raise the limits with `<PROVIDER>_REQUESTS_PER_MINUTE` and `<PROVIDER>_DAILY_LIMIT`.
-- **Turning a provider off:** use `PROVIDERS_DISABLED=otx,greynoise`.
-- **Missing keys:** a provider without a key shows as *unconfigured* and is never called.
-- **Cisco Talos:** not integrated, because it has no public lookup API and scraping is out of scope.
+A provider without a key shows as *unconfigured* and is never called.
 
 ## Risk rules
 
-The defaults live in `backend/src/config/riskRules.ts`. To override any part, point `RISK_RULES_PATH` at a JSON file, for example:
-
-```json
-{ "abuseipdb": { "high": 90, "medium": 40 }, "virustotal": { "hash": { "high": 15 } } }
-```
-
-The highest provider signal sets the level. Each provider uses its own scale, so the numbers are not compared across providers:
+The defaults live in `backend/src/config/riskRules.ts`. To override any part, point `RISK_RULES_PATH` at a JSON file, e.g. `{ "abuseipdb": { "high": 90 } }`. The highest provider signal sets the level, and each provider keeps its own scale:
 
 | Provider | Measure | Default thresholds |
 |---|---|---|
 | VirusTotal | Malicious engine count | IPs/domains: High ≥ 5, Medium ≥ 2. URLs: High ≥ 4, Medium ≥ 2. Hashes: High ≥ 10, Medium ≥ 3. |
 | AbuseIPDB | Abuse confidence | High ≥ 75%, Medium ≥ 25%. |
-| OTX | Pulse count | Medium ≥ 10, Low ≥ 1. Community pulses alone never make High. |
-| URLhaus | Listing | Listed URL or payload = High. Host with online malware URLs = High. Host with only offline history = Medium. |
-| GreyNoise | Classification | Malicious scanner = Medium (opportunistic, not targeted). |
+| OTX | Pulse count | Medium ≥ 10, Low ≥ 1. Pulses alone never make High. |
+| URLhaus | Listing | Listed URL or payload = High. Host with online malware = High. Host with offline history only = Medium. |
 
-**Known limitations of the scoring:**
-- **Engine counts lag:** detection counts trail new threats and include false positives.
-- **AbuseIPDB scores move:** they decay over time.
-- **OTX pulses vary:** pulses are community-curated and of uneven quality.
-- **URLhaus host listings:** shared hosting and CDNs can appear because of one malicious URL.
-- **Low and Unknown are not safe:** treat the level as a triage aid, never as a verdict to act on automatically. The app never blocks, quarantines or deletes anything.
-
-## Architecture
-
-```
-frontend/  React 19 + Vite + Tailwind 4 (single page, served by the backend in production)
-backend/
-  src/parser/      offline IOC parser (validation, refang, IDN, dedupe, extraction, CSV)
-  src/providers/   adapter per provider + allowlisted, timed HTTP client + registry
-  src/queue/       LookupQueue: BullMQ (per-provider queue + limiter) | in-memory dev fallback
-  src/services/    enrichment (batches, cache, processing, retries, recovery, retention), risk engine, views, exports, audit
-  src/models/      Batch, Indicator, EnrichmentResult, AuditEvent, ProviderUsage (MongoDB, indexed)
-  src/controllers/ src/routes/ src/middleware/   Express 5 API, validation (Zod), security
-docker-compose.yml MongoDB 7 + Redis 7 bound to localhost
-```
-
-- **Lookups:** each lookup is an `EnrichmentResult` document. Workers claim it atomically (so a duplicate job can never call a provider twice), then record the outcome.
-- **Batch status:** always derived from those lookup documents, so a batch is never reported complete while anything is queued or running.
-- **Cached results:** completed results double as the cache.
+**How to read the levels:**
+- **Low** means providers have a record and none flag it significantly. It is not a guarantee of safety.
+- **Unknown** means there is no usable evidence.
+- **Triage only:** the app never blocks, quarantines or deletes anything on its own.
 
 ## Security
 
-- **No authentication yet:** the server binds to `127.0.0.1` and refuses to start on another interface unless `ALLOW_UNAUTHENTICATED_REMOTE=true`. Add authentication before sharing it on a network.
-- **API keys:** they exist only in `backend/.env`. They are never sent to the browser, logged or stored in MongoDB, and a test sweeps every endpoint for them.
-- **Outbound requests:** https only, to each provider's allowlisted host, with redirects refused and a hard timeout (SSRF guard).
-- **Request handling:** Helmet security headers (CSP), per-IP rate limiting, strict request validation, size/type/UTF-8 checks on uploads, and React escaping. Provider links are only rendered when they are `https://`.
-- **Logging:** request logs record the method, path and status only, never query strings or bodies.
-- **Exports:** CSV cells are protected against spreadsheet formula injection.
-- **Audit log:** records actions and counts, never indicator values.
+- **Sign-in:**
+  - Passwords are hashed with scrypt.
+  - Sessions are server-side; the session token lives in an httpOnly, `Secure`, `SameSite=Lax` cookie (with the `__Host-` prefix over HTTPS), and only its hash is stored in the database.
+  - Accounts lock for 15 minutes after 5 failed sign-ins, and sign-in is also rate-limited per IP.
+  - A password reset, deactivation or role change signs the user out everywhere.
+- **Authorization:** every API route except health and sign-in requires a session. Admin-only routes are enforced on the server, not just hidden in the UI.
+- **Cross-site requests:** state-changing requests from other origins are rejected, on top of the SameSite cookie protection.
+- **Provider keys:** they exist only as server environment variables. They are never sent to the browser, logged or stored, and a test sweeps every endpoint for them.
+- **Outbound requests (SSRF guard):** https only, to each provider's allowlisted host, with redirects refused and a hard timeout.
+- **Browser hardening:** a strict Content-Security-Policy and security headers on both Vercel and the API, request validation (Zod), checks on upload size, type and encoding, and React escaping. Provider links are only rendered when they are `https://`.
+- **Logs and exports:** request logs record only the method, path and status, never query strings or bodies. CSV exports are protected against formula injection. The audit log never records indicator values.
 
 ## API
 
 See [docs/API.md](docs/API.md).
-
-## Known limitations and next steps
-
-- **Single user, no login:** batches are attributed to an anonymous browser session cookie. Add authentication and roles before any multi-user deployment.
-- **Development fallbacks:** the embedded database and in-process queue are meant for a single analyst on one PC. Use real MongoDB and Redis (`docker compose up -d`) for anything shared.
-- **Free-text extraction is heuristic:** for example, real TLDs that look like filenames (`readme.md`) are extracted, but flagged with a note.
-- **Ideas for later:** more providers (Shodan, MISP, a self-hosted OpenCTI), a STIX export, batch comparison, and saved filters.

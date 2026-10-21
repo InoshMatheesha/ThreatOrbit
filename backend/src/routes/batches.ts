@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { AppConfig } from '../config/env.js';
 import { batchHandlers } from '../controllers/batchController.js';
 import { createPreviewHandler } from '../controllers/previewController.js';
+import { requireRole } from '../middleware/auth.js';
 import { uploadSingleFile } from '../middleware/upload.js';
 import type { EnrichmentService } from '../services/enrichmentService.js';
 import { unavailable } from './unavailable.js';
@@ -17,7 +18,7 @@ export function batchesRouter(config: AppConfig, service?: EnrichmentService): R
   const h = batchHandlers(config, service);
   router.post('/', upload, h.create);
   router.get('/', h.list);
-  router.delete('/', h.removeAll);
+  router.delete('/', requireRole('admin'), h.removeAll);
   router.get('/:id', h.get);
   router.get('/:id/results', h.results);
   router.get('/:id/items/:index', h.item);

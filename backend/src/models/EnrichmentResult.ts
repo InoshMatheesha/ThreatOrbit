@@ -27,7 +27,6 @@ export interface EnrichmentResultDoc {
   provider: ProviderId;
   status: LookupStatus;
   attempts: number;
-  synthetic: boolean;
   outcome?: LookupOutcome;
   verdict?: Verdict;
   summary?: string;
@@ -55,7 +54,6 @@ const resultSchema = new Schema<EnrichmentResultDoc>(
     provider: { type: String, required: true },
     status: { type: String, enum: LOOKUP_STATUSES, required: true },
     attempts: { type: Number, default: 0 },
-    synthetic: { type: Boolean, default: false },
     outcome: { type: String, enum: ['found', 'not_found'] },
     verdict: { type: String, enum: ['malicious', 'suspicious', 'no_detections', 'benign', 'unknown'] },
     summary: String,

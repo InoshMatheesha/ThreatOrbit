@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Batch } from '../../lib/api';
 
 const REFRESH_MS = 1500;
+/** Safety net when the event stream is cut by a proxy (e.g. hosting platform limits). */
+const POLL_MS = 5000;
 
 /**
- * Loads a batch and follows it over Server-Sent Events until it is terminal.
+ * Loads a batch and follows it until it is terminal: Server-Sent Events for
+ * prompt updates, plus a slow poll in case a proxy drops the stream.
  * `version` increments whenever results may have changed, so tables can refetch.
  */
 export function useBatchLive(id: string) {
@@ -48,13 +51,20 @@ export function useBatchLive(id: string) {
       source.close();
       setError('This batch was deleted');
     });
-    return () => source.close();
+    const poll = window.setInterval(() => void reload(), POLL_MS);
+    return () => {
+      source.close();
+      clearInterval(poll);
+    };
     // Re-subscribe only when the batch switches between active and terminal (e.g. after a retry).
   }, [id, terminal, Boolean(batch)]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => () => {
-    if (pending.current !== null) clearTimeout(pending.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (pending.current !== null) clearTimeout(pending.current);
+    },
+    [],
+  );
 
   return { batch, error, version, reload };
 }

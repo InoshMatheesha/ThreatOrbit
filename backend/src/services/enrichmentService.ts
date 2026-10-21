@@ -23,6 +23,7 @@ import type { ProviderRegistry } from '../providers/registry.js';
 import { isRetryableKind, ProviderError, type ErrorKind, type ProviderFinding } from '../providers/types.js';
 import type { LookupJob, LookupQueue, ProcessOutcome } from '../queue/types.js';
 import { audit } from './audit.js';
+import type { Principal } from './authService.js';
 import { reserveRequest } from './providerUsage.js';
 
 /** A 429 asking us to wait longer than this is a quota, not a burst limit. */
@@ -36,8 +37,7 @@ const MAX_ORIGINALS_PER_ITEM = 20;
 const NOT_RETRYABLE_BY_USER: ReadonlySet<ErrorKind> = new Set(['invalid_request']);
 
 export interface CreateBatchOptions {
-  sessionId: string;
-  demo: boolean;
+  actor: Principal;
   label?: string;
   source: BatchDoc['source'];
 }
@@ -100,28 +100,24 @@ export class EnrichmentService {
 
   // ---------------------------------------------------------------- batches
 
-  snapshotProviders(demo: boolean): ProviderSnapshot[] {
-    return this.deps.registry
-      .all()
-      .filter((r) => Boolean(r.adapter.synthetic) === demo)
-      .map((r) => ({
-        id: r.adapter.id,
-        name: r.adapter.name,
-        state: r.state,
-        supports: [...r.adapter.supports],
-        synthetic: Boolean(r.adapter.synthetic),
-        requestsPerMinute: r.limits.requestsPerMinute,
-      }));
+  snapshotProviders(): ProviderSnapshot[] {
+    return this.deps.registry.all().map((r) => ({
+      id: r.adapter.id,
+      name: r.adapter.name,
+      state: r.state,
+      supports: [...r.adapter.supports],
+      requestsPerMinute: r.limits.requestsPerMinute,
+    }));
   }
 
   async createBatch(parsed: ParseResult, opts: CreateBatchOptions): Promise<BatchDoc> {
     const { config, registry, queue, logger } = this.deps;
-    const providers = registry.forBatch(opts.demo);
+    const providers = registry.ready();
     if (providers.length === 0) {
       throw new ApiError(
         409,
         'NO_PROVIDERS_CONFIGURED',
-        'No threat intel provider is configured. Add API keys to backend/.env and restart, or run the batch in demo mode.',
+        'No threat intel provider is configured. Add provider API keys to the server environment and restart it.',
       );
     }
 
@@ -161,7 +157,6 @@ export class EnrichmentService {
       const fresh = await EnrichmentResult.find({
         provider: id,
         status: 'completed',
-        synthetic: opts.demo,
         expiresAt: { $gt: now },
         value: { $in: targets.map((t) => t.value) },
       })
@@ -171,7 +166,7 @@ export class EnrichmentService {
       for (const r of fresh) if (!cache.has(`${r.type}:${r.value}`)) cache.set(`${r.type}:${r.value}`, r);
 
       for (const item of targets) {
-        const base = { batchId, itemIndex: item.index, type: item.type, value: item.value, provider: id, synthetic: opts.demo };
+        const base = { batchId, itemIndex: item.index, type: item.type, value: item.value, provider: id };
         const hit = cache.get(`${item.type}:${item.value}`);
         if (hit) {
           cachedCount++;
@@ -203,10 +198,9 @@ export class EnrichmentService {
       _id: batchId,
       ...(opts.label ? { label: opts.label } : {}),
       status: 'queued',
-      demo: opts.demo,
       mode: parsed.mode,
       source: opts.source,
-      sessionId: opts.sessionId,
+      createdBy: { id: opts.actor.id, email: opts.actor.email, name: opts.actor.name },
       totals: {
         indicators: items.length,
         eligible: eligible.length,
@@ -215,7 +209,7 @@ export class EnrichmentService {
         duplicates: parsed.stats.duplicates,
       },
       counters: { total: docs.length, queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0, cached: 0 },
-      providers: this.snapshotProviders(opts.demo),
+      providers: this.snapshotProviders(),
       items,
     });
 
@@ -236,12 +230,11 @@ export class EnrichmentService {
     await queue.enqueue(jobs);
     await this.refreshBatch(batchId);
 
-    await audit(logger, 'batch.create', opts.sessionId, batchId, {
+    await audit(logger, 'batch.create', opts.actor, batchId, {
       indicators: items.length,
       eligible: eligible.length,
       lookups: docs.length,
       cached: cachedCount,
-      demo: opts.demo,
       providers: providers.map((p) => p.adapter.id).join(','),
     });
     return (await Batch.findById(batchId).lean())!;
@@ -250,9 +243,11 @@ export class EnrichmentService {
   /** Recompute counters from the lookups and derive the batch status. Serialized per batch. */
   refreshBatch(batchId: string): Promise<void> {
     const previous = this.refreshChains.get(batchId) ?? Promise.resolve();
-    const next = previous.then(() => this.doRefresh(batchId)).catch((err) => {
-      this.deps.logger.error({ batchId, err: (err as Error).message }, 'Failed to refresh batch');
-    });
+    const next = previous
+      .then(() => this.doRefresh(batchId))
+      .catch((err) => {
+        this.deps.logger.error({ batchId, err: (err as Error).message }, 'Failed to refresh batch');
+      });
     this.refreshChains.set(batchId, next);
     void next.finally(() => {
       if (this.refreshChains.get(batchId) === next) this.refreshChains.delete(batchId);
@@ -303,8 +298,8 @@ export class EnrichmentService {
     );
   }
 
-  async cancelBatch(batchId: string, sessionId: string) {
-    const batch = await this.requireBatch(batchId);
+  async cancelBatch(batchId: string, actor: Principal) {
+    const batch = await this.requireBatch(batchId, actor);
     if (TERMINAL_BATCH_STATUSES.has(batch.status) || batch.status === 'cancelling') {
       throw new ApiError(409, 'BATCH_NOT_ACTIVE', `Batch is already ${batch.status.replaceAll('_', ' ')}`);
     }
@@ -312,18 +307,18 @@ export class EnrichmentService {
     const { modifiedCount } = await EnrichmentResult.updateMany({ batchId, status: 'queued' }, { $set: { status: 'cancelled' } });
     await this.deps.queue.cancelBatch(batchId);
     await this.refreshBatch(batchId);
-    await audit(this.deps.logger, 'batch.cancel', sessionId, batchId, { cancelledLookups: modifiedCount });
+    await audit(this.deps.logger, 'batch.cancel', actor, batchId, { cancelledLookups: modifiedCount });
   }
 
-  async deleteBatch(batchId: string, sessionId: string) {
-    await this.requireBatch(batchId);
+  async deleteBatch(batchId: string, actor: Principal) {
+    await this.requireBatch(batchId, actor);
     await this.deps.queue.cancelBatch(batchId);
     const { deletedCount } = await EnrichmentResult.deleteMany({ batchId });
     await Batch.deleteOne({ _id: batchId });
-    await audit(this.deps.logger, 'batch.delete', sessionId, batchId, { lookupsDeleted: deletedCount });
+    await audit(this.deps.logger, 'batch.delete', actor, batchId, { lookupsDeleted: deletedCount });
   }
 
-  async deleteAllHistory(sessionId: string) {
+  async deleteAllHistory(actor: Principal) {
     const ids = await Batch.distinct('_id');
     for (const id of ids) await this.deps.queue.cancelBatch(String(id));
     const [batches, results, indicators] = await Promise.all([
@@ -331,7 +326,7 @@ export class EnrichmentService {
       EnrichmentResult.deleteMany({}),
       Indicator.deleteMany({}),
     ]);
-    await audit(this.deps.logger, 'history.delete_all', sessionId, undefined, {
+    await audit(this.deps.logger, 'history.delete_all', actor, undefined, {
       batches: batches.deletedCount,
       lookups: results.deletedCount,
       indicators: indicators.deletedCount,
@@ -339,27 +334,27 @@ export class EnrichmentService {
     return { batches: batches.deletedCount, lookups: results.deletedCount, indicators: indicators.deletedCount };
   }
 
-  async retryResult(resultId: string, sessionId: string) {
+  async retryResult(resultId: string, actor: Principal) {
     const result = await EnrichmentResult.findById(resultId).lean();
     if (!result) throw new ApiError(404, 'NOT_FOUND', 'Lookup not found');
+    const batch = await this.requireBatch(result.batchId, actor);
     this.assertRetryable(result);
-    const batch = await this.requireBatch(result.batchId);
     if (batch.status === 'cancelled' || batch.status === 'cancelling') {
       throw new ApiError(409, 'BATCH_NOT_ACTIVE', 'Cannot retry lookups in a cancelled batch');
     }
     await this.requeue([result]);
-    await audit(this.deps.logger, 'result.retry', sessionId, result.batchId, { provider: result.provider });
+    await audit(this.deps.logger, 'result.retry', actor, result.batchId, { provider: result.provider });
   }
 
-  async retryFailed(batchId: string, sessionId: string) {
-    const batch = await this.requireBatch(batchId);
+  async retryFailed(batchId: string, actor: Principal) {
+    const batch = await this.requireBatch(batchId, actor);
     if (batch.status === 'cancelled' || batch.status === 'cancelling') {
       throw new ApiError(409, 'BATCH_NOT_ACTIVE', 'Cannot retry lookups in a cancelled batch');
     }
     const failed = await EnrichmentResult.find({ batchId, status: 'failed', 'error.kind': { $nin: [...NOT_RETRYABLE_BY_USER] } }).lean();
     if (!failed.length) throw new ApiError(409, 'NOTHING_TO_RETRY', 'No failed lookups are eligible for retry');
     await this.requeue(failed);
-    await audit(this.deps.logger, 'batch.retry_failed', sessionId, batchId, { lookups: failed.length });
+    await audit(this.deps.logger, 'batch.retry_failed', actor, batchId, { lookups: failed.length });
     return failed.length;
   }
 
@@ -374,14 +369,21 @@ export class EnrichmentService {
 
   private async requeue(results: Array<Pick<EnrichmentResultDoc, '_id' | 'batchId' | 'provider'>>) {
     const ids = results.map((r) => r._id);
-    await EnrichmentResult.updateMany({ _id: { $in: ids }, status: 'failed' }, { $set: { status: 'queued', attempts: 0 }, $unset: { error: 1 } });
+    await EnrichmentResult.updateMany(
+      { _id: { $in: ids }, status: 'failed' },
+      { $set: { status: 'queued', attempts: 0 }, $unset: { error: 1 } },
+    );
     await this.deps.queue.enqueue(results.map((r) => ({ resultId: String(r._id), batchId: r.batchId, provider: r.provider, attempt: 1 })));
     for (const batchId of new Set(results.map((r) => r.batchId))) await this.refreshBatch(batchId);
   }
 
-  private async requireBatch(batchId: string) {
-    const batch = await Batch.findById(batchId, { status: 1 }).lean();
+  /** Load a batch for a change. Analysts may only change their own batches; admins any. */
+  private async requireBatch(batchId: string, actor: Principal) {
+    const batch = await Batch.findById(batchId, { status: 1, createdBy: 1 }).lean();
     if (!batch) throw new ApiError(404, 'NOT_FOUND', 'Batch not found');
+    if (actor.role !== 'admin' && batch.createdBy?.id !== actor.id) {
+      throw new ApiError(403, 'FORBIDDEN', 'Only the analyst who started this batch, or an admin, can change it');
+    }
     return batch;
   }
 
@@ -440,8 +442,7 @@ export class EnrichmentService {
         );
         return { kind: 'done' };
       } catch (err) {
-        const e =
-          err instanceof ProviderError ? err : new ProviderError('provider_error', `Unexpected error: ${(err as Error).message}`);
+        const e = err instanceof ProviderError ? err : new ProviderError('provider_error', `Unexpected error: ${(err as Error).message}`);
         let kind = e.kind;
         const retryAfter = e.options.retryAfterMs;
         if (kind === 'rate_limited' && retryAfter !== undefined && retryAfter > QUOTA_RETRY_AFTER_MS) kind = 'quota_exhausted';
@@ -450,7 +451,17 @@ export class EnrichmentService {
           const delayMs = kind === 'rate_limited' ? (retryAfter ?? DEFAULT_RATE_LIMIT_WAIT_MS) : this.backoff(claimed.attempts);
           await EnrichmentResult.updateOne(
             { _id: claimed._id, status: 'running' },
-            { $set: { status: 'queued', error: { kind, message: `${e.message}; retrying`, at: new Date(), ...(e.options.httpStatus ? { httpStatus: e.options.httpStatus } : {}) } } },
+            {
+              $set: {
+                status: 'queued',
+                error: {
+                  kind,
+                  message: `${e.message}; retrying`,
+                  at: new Date(),
+                  ...(e.options.httpStatus ? { httpStatus: e.options.httpStatus } : {}),
+                },
+              },
+            },
           );
           logger.warn({ provider: job.provider, kind, attempt: claimed.attempts, delayMs }, 'Lookup will be retried');
           return { kind: 'retry', delayMs, ...(kind === 'rate_limited' ? { pauseProviderMs: delayMs } : {}) };
@@ -521,7 +532,7 @@ export class EnrichmentService {
         ProviderUsage.deleteMany({ day: { $lt: new Date(now.getTime() - 7 * 86_400_000).toISOString().slice(0, 10) } }),
       ]);
       if (batches.deletedCount || results.deletedCount || indicators.deletedCount) {
-        await audit(this.deps.logger, 'retention.purge', 'system', undefined, {
+        await audit(this.deps.logger, 'retention.purge', null, undefined, {
           batches: batches.deletedCount,
           lookups: results.deletedCount,
           indicators: indicators.deletedCount,
@@ -537,7 +548,7 @@ export class EnrichmentService {
   }
 
   /** Make one real request with a harmless indicator to check the key works. */
-  async testProvider(id: ProviderId, sessionId: string) {
+  async testProvider(id: ProviderId, actor: Principal) {
     const runtime = this.deps.registry.get(id);
     if (runtime.state !== 'ready' || !runtime.apiKey) {
       return { ok: false, state: runtime.state, message: `${runtime.adapter.name} is ${runtime.state}` };
@@ -548,7 +559,7 @@ export class EnrichmentService {
     const started = Date.now();
     try {
       const finding = await runtime.adapter.lookup(runtime.adapter.probe, { apiKey: runtime.apiKey, http: runtime.http });
-      await audit(this.deps.logger, 'provider.test', sessionId, undefined, { provider: id, ok: true });
+      await audit(this.deps.logger, 'provider.test', actor, undefined, { provider: id, ok: true });
       return {
         ok: true,
         state: runtime.state,
@@ -557,7 +568,7 @@ export class EnrichmentService {
       };
     } catch (err) {
       const e = err instanceof ProviderError ? err : new ProviderError('provider_error', (err as Error).message);
-      await audit(this.deps.logger, 'provider.test', sessionId, undefined, { provider: id, ok: false, kind: e.kind });
+      await audit(this.deps.logger, 'provider.test', actor, undefined, { provider: id, ok: false, kind: e.kind });
       return { ok: false, state: runtime.state, kind: e.kind, message: e.message, ms: Date.now() - started };
     }
   }

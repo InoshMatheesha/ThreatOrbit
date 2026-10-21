@@ -67,8 +67,12 @@ export class ApiRequestError extends Error {
   }
 }
 
+/** Fired when the server says the session is gone, so the app can show the sign-in page. */
+export const UNAUTHORIZED_EVENT = 'tih:unauthorized';
+
 async function handle<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => null);
+  if (res.status === 401 && !res.url.endsWith('/api/auth/login')) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   if (!res.ok) {
     const err = body?.error;
     throw new ApiRequestError(res.status, err?.code ?? 'HTTP_ERROR', err?.message ?? `Request failed (${res.status})`);
@@ -100,7 +104,21 @@ export async function getHealth(signal?: AbortSignal): Promise<{ status: string 
 
 // ---------------------------------------------------------------- enrichment
 
-export type ProviderId = 'virustotal' | 'abuseipdb' | 'otx' | 'urlhaus' | 'greynoise' | 'demo';
+export type ProviderId = 'virustotal' | 'abuseipdb' | 'otx' | 'urlhaus';
+export type Role = 'admin' | 'analyst';
+
+export interface CurrentUser {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+}
+
+export interface TeamUser extends CurrentUser {
+  active: boolean;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
 export type RiskLevel = 'high' | 'medium' | 'low' | 'unknown';
 export type BatchStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'completed_with_errors' | 'cancelled';
 export type Verdict = 'malicious' | 'suspicious' | 'no_detections' | 'benign' | 'unknown';
@@ -110,7 +128,6 @@ export interface ProviderSnapshot {
   name: string;
   state: 'ready' | 'unconfigured' | 'disabled';
   supports: IndicatorType[];
-  synthetic: boolean;
   requestsPerMinute: number;
 }
 
@@ -139,8 +156,8 @@ export interface Batch {
   label?: string;
   status: BatchStatus;
   terminal: boolean;
-  demo: boolean;
   mode: ParseMode;
+  createdBy: { id: string; email: string; name: string };
   source: { kind: 'text' | 'file'; name?: string; bytes?: number };
   totals: { indicators: number; eligible: number; ineligible: number; invalid: number; duplicates: number };
   counters: Counters;
@@ -171,7 +188,6 @@ export interface ResultView {
   expiresAt?: string;
   cacheStatus?: 'hit' | 'miss';
   error?: { kind: string; message: string; httpStatus?: number; at: string };
-  synthetic: boolean;
 }
 
 export interface RiskAssessment {
@@ -203,7 +219,6 @@ export interface ProviderInfo {
   description: string;
   supports: IndicatorType[];
   state: 'ready' | 'unconfigured' | 'disabled';
-  synthetic: boolean;
   credentialEnv: string | null;
   signupUrl: string;
   limits: { requestsPerMinute: number; dailyLimit: number | null; concurrency: number };
@@ -222,6 +237,7 @@ export interface Health {
 export interface AuditEntry {
   at: string;
   action: string;
+  actor: { id: string; email: string; name: string } | null;
   batchId?: string;
   details?: Record<string, string | number | boolean>;
 }
@@ -252,20 +268,25 @@ async function send<T>(method: string, url: string, body?: unknown): Promise<T> 
 async function getWithMeta<T, M>(url: string, signal?: AbortSignal): Promise<{ data: T; meta: M }> {
   const res = await fetch(url, { signal });
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiRequestError(res.status, body?.error?.code ?? 'HTTP_ERROR', body?.error?.message ?? `Request failed (${res.status})`);
+  if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  if (!res.ok)
+    throw new ApiRequestError(res.status, body?.error?.code ?? 'HTTP_ERROR', body?.error?.message ?? `Request failed (${res.status})`);
   return body;
 }
 
 export interface CreateBatchInput {
   input: { kind: 'text'; text: string } | { kind: 'file'; file: File };
   mode: ParseMode;
-  demo: boolean;
   label?: string;
   acknowledgeThirdPartySharing: boolean;
 }
 
 export async function createBatch(input: CreateBatchInput): Promise<Batch> {
-  const fields = { mode: input.mode, demo: input.demo, acknowledgeThirdPartySharing: input.acknowledgeThirdPartySharing, ...(input.label ? { label: input.label } : {}) };
+  const fields = {
+    mode: input.mode,
+    acknowledgeThirdPartySharing: input.acknowledgeThirdPartySharing,
+    ...(input.label ? { label: input.label } : {}),
+  };
   if (input.input.kind === 'text') return send('POST', '/api/batches', { text: input.input.text, ...fields });
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
@@ -275,25 +296,35 @@ export async function createBatch(input: CreateBatchInput): Promise<Batch> {
 
 export const api = {
   getHealth: async (signal?: AbortSignal): Promise<Health> => handle(await fetch('/api/health', { signal })),
-  listBatches: (page = 1, pageSize = 25) =>
-    getWithMeta<Batch[], { total: number; page: number; pageSize: number }>(`/api/batches?page=${page}&pageSize=${pageSize}`),
+  listBatches: (page = 1, pageSize = 25, mine = false) =>
+    getWithMeta<Batch[], { total: number; page: number; pageSize: number }>(
+      `/api/batches?page=${page}&pageSize=${pageSize}${mine ? '&mine=true' : ''}`,
+    ),
   getBatch: async (id: string, signal?: AbortSignal): Promise<Batch> => handle(await fetch(`/api/batches/${id}`, { signal })),
   getResults: (id: string, q: ResultsQuery, signal?: AbortSignal) => {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '' && v !== false) params.set(k, String(v));
-    return getWithMeta<ItemView[], { total: number; page: number; pageSize: number; demo: boolean; providers: ProviderSnapshot[] }>(
+    return getWithMeta<ItemView[], { total: number; page: number; pageSize: number; providers: ProviderSnapshot[] }>(
       `/api/batches/${id}/results?${params}`,
       signal,
     );
   },
-  getItem: (id: string, index: number) => getWithMeta<ItemView, { demo: boolean; providers: ProviderSnapshot[] }>(`/api/batches/${id}/items/${index}`),
+  getItem: (id: string, index: number) => getWithMeta<ItemView, { providers: ProviderSnapshot[] }>(`/api/batches/${id}/items/${index}`),
   cancelBatch: (id: string) => send<Batch>('POST', `/api/batches/${id}/cancel`),
   retryFailed: (id: string) => send<{ requeued: number }>('POST', `/api/batches/${id}/retry-failed`),
   retryResult: (resultId: string) => send<{ id: string }>('POST', `/api/results/${resultId}/retry`),
   deleteBatch: (id: string) => send<void>('DELETE', `/api/batches/${id}`),
   deleteAll: () => send<{ batches: number }>('DELETE', '/api/batches', { confirm: 'DELETE ALL' }),
   providers: () => getWithMeta<ProviderInfo[], { queueMode: 'bullmq' | 'memory' }>('/api/providers'),
-  testProvider: (id: ProviderId) =>
-    send<{ ok: boolean; message: string; kind?: string; ms?: number }>('POST', `/api/providers/${id}/test`),
+  testProvider: (id: ProviderId) => send<{ ok: boolean; message: string; kind?: string; ms?: number }>('POST', `/api/providers/${id}/test`),
   audit: (limit = 50) => send<AuditEntry[]>('GET', `/api/audit?limit=${limit}`),
+  me: () => send<CurrentUser>('GET', '/api/auth/me'),
+  login: (email: string, password: string) => send<CurrentUser>('POST', '/api/auth/login', { email, password }),
+  logout: () => send<void>('POST', '/api/auth/logout'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    send<void>('POST', '/api/auth/password', { currentPassword, newPassword }),
+  users: () => send<TeamUser[]>('GET', '/api/users'),
+  createUser: (user: { email: string; name: string; role: Role; password: string }) => send<TeamUser>('POST', '/api/users', user),
+  updateUser: (id: string, changes: Partial<{ name: string; role: Role; active: boolean; password: string }>) =>
+    send<TeamUser>('PATCH', `/api/users/${id}`, changes),
 };

@@ -65,7 +65,10 @@ export function guardNetwork() {
     guard(dns, fn, `dns.${fn}`);
     guard(dns.promises, fn, `dns.promises.${fn}`, true);
   }
-  for (const [mod, name] of [[http, 'http'], [https, 'https']] as const) {
+  for (const [mod, name] of [
+    [http, 'http'],
+    [https, 'https'],
+  ] as const) {
     guard(mod, 'request', `${name}.request`);
     guard(mod, 'get', `${name}.get`);
   }

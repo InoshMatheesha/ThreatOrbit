@@ -23,10 +23,6 @@ export interface RiskRules {
   otx: { medium: number; low: number };
   /** URLhaus: severity for each kind of listing. */
   urlhaus: { url: Severity; payload: Severity; hostWithOnlineUrls: Severity; host: Severity };
-  /** GreyNoise: scanners are opportunistic, so even "malicious" noise is capped below High by default. */
-  greynoise: { malicious: Severity; suspicious: Severity };
-  /** Synthetic demo provider (engine-count scale, demo batches only). */
-  demo: Thresholds;
 }
 
 export const DEFAULT_RISK_RULES: RiskRules = {
@@ -39,8 +35,6 @@ export const DEFAULT_RISK_RULES: RiskRules = {
   abuseipdb: { high: 75, medium: 25, low: 1 },
   otx: { medium: 10, low: 1 },
   urlhaus: { url: 'high', payload: 'high', hostWithOnlineUrls: 'high', host: 'medium' },
-  greynoise: { malicious: 'medium', suspicious: 'low' },
-  demo: { high: 10, medium: 2, low: 1 },
 };
 
 function merge<T>(base: T, override: unknown): T {

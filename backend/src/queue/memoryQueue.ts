@@ -118,10 +118,13 @@ export class MemoryLookupQueue implements LookupQueue {
   private wake(provider: ProviderId, ms: number) {
     const lane = this.lanes.get(provider)!;
     if (lane.timer) return;
-    lane.timer = setTimeout(() => {
-      lane.timer = null;
-      this.pump(provider);
-    }, Math.max(ms, 10));
+    lane.timer = setTimeout(
+      () => {
+        lane.timer = null;
+        this.pump(provider);
+      },
+      Math.max(ms, 10),
+    );
   }
 
   private async run(provider: ProviderId, lane: Lane, job: LookupJob) {

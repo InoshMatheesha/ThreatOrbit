@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { BatchStatusBadge, DemoBadge, ErrorBanner, Notice, Panel, ProgressBar, Spinner } from '../components/ui';
+import { BatchStatusBadge, ErrorBanner, Notice, Panel, ProgressBar, Spinner } from '../components/ui';
 import { useBatchLive } from '../features/batches/useBatchLive';
 import { DetailPanel } from '../features/results/DetailPanel';
 import { ResultsTable } from '../features/results/ResultsTable';
 import { api, type Batch } from '../lib/api';
+import { useUser } from '../lib/auth';
 import { dateTime, duration, relativeTime, shortId } from '../lib/format';
 import { Link, navigate } from '../lib/router';
 
@@ -64,7 +65,11 @@ function ProviderProgressPanel({ batch }: { batch: Batch }) {
         </table>
         {batch.providers.some((p) => p.state !== 'ready') && (
           <p className="text-slate-500">
-            Not used: {batch.providers.filter((p) => p.state !== 'ready').map((p) => `${p.name} (${p.state})`).join(', ')}
+            Not used:{' '}
+            {batch.providers
+              .filter((p) => p.state !== 'ready')
+              .map((p) => `${p.name} (${p.state})`)
+              .join(', ')}
           </p>
         )}
       </div>
@@ -73,6 +78,7 @@ function ProviderProgressPanel({ batch }: { batch: Batch }) {
 }
 
 export function BatchPage({ id }: { id: string }) {
+  const user = useUser();
   const { batch, error, version, reload } = useBatchLive(id);
   const [selected, setSelected] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -111,8 +117,9 @@ export function BatchPage({ id }: { id: string }) {
 
   const c = batch.counters;
   const risk = batch.summary?.risk ?? { high: 0, medium: 0, low: 0, unknown: 0 };
-  const active = !batch.terminal && batch.status !== 'cancelling';
-  const canRetry = c.failed > 0 && batch.status !== 'cancelled' && batch.status !== 'cancelling';
+  const canManage = user.role === 'admin' || batch.createdBy?.id === user.id;
+  const active = canManage && !batch.terminal && batch.status !== 'cancelling';
+  const canRetry = canManage && c.failed > 0 && batch.status !== 'cancelled' && batch.status !== 'cancelling';
 
   return (
     <main className="mx-auto max-w-[1400px] space-y-3 px-4 py-4">
@@ -121,17 +128,22 @@ export function BatchPage({ id }: { id: string }) {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-base font-semibold">{batch.label || `Batch ${shortId(batch.id)}`}</h1>
             <BatchStatusBadge status={batch.status} />
-            {batch.demo && <DemoBadge />}
           </div>
           <div className="mt-0.5 text-xs text-slate-500" title={dateTime(batch.createdAt)}>
-            Created {relativeTime(batch.createdAt)} · {batch.source.kind === 'file' ? `file ${batch.source.name}` : 'pasted text'} ·{' '}
+            Started by {batch.createdBy?.name ?? 'unknown'} {relativeTime(batch.createdAt)} ·{' '}
+            {batch.source.kind === 'file' ? `file ${batch.source.name}` : 'pasted text'} ·{' '}
             {batch.mode === 'extract' ? 'extracted from text' : 'one per line'} · <span className="font-mono">{batch.id}</span>
             {batch.completedAt && ` · finished ${relativeTime(batch.completedAt)}`}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {active && (
-            <button type="button" className="btn-danger" disabled={busy !== null} onClick={() => confirm('Cancel the remaining lookups in this batch?') && act('cancel', () => api.cancelBatch(batch.id))}>
+            <button
+              type="button"
+              className="btn-danger"
+              disabled={busy !== null}
+              onClick={() => confirm('Cancel the remaining lookups in this batch?') && act('cancel', () => api.cancelBatch(batch.id))}
+            >
               {busy === 'cancel' ? 'Cancelling…' : 'Cancel batch'}
             </button>
           )}
@@ -146,22 +158,23 @@ export function BatchPage({ id }: { id: string }) {
           <a className="btn" href={`/api/exports/${batch.id}?format=json`} download>
             Export JSON
           </a>
-          <button
-            type="button"
-            className="btn-danger"
-            disabled={busy !== null}
-            onClick={async () => {
-              if (!confirm('Delete this batch and all of its results? This cannot be undone.')) return;
-              await act('delete', () => api.deleteBatch(batch.id));
-              navigate('/batches');
-            }}
-          >
-            Delete
-          </button>
+          {canManage && (
+            <button
+              type="button"
+              className="btn-danger"
+              disabled={busy !== null}
+              onClick={async () => {
+                if (!confirm('Delete this batch and all of its results? This cannot be undone.')) return;
+                await act('delete', () => api.deleteBatch(batch.id));
+                navigate('/batches');
+              }}
+            >
+              Delete
+            </button>
+          )}
         </div>
       </div>
 
-      {batch.demo && <Notice tone="demo">This is a demo batch. Every result is SYNTHETIC: generated locally, not threat intelligence, and never mixed with real results.</Notice>}
       {actionError && <ErrorBanner>{actionError}</ErrorBanner>}
       {!batch.terminal && (
         <Notice>
@@ -172,19 +185,41 @@ export function BatchPage({ id }: { id: string }) {
       )}
 
       <div className="flex flex-wrap divide-x divide-slate-200 rounded-md border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
-        <Metric label="Indicators" value={batch.totals.indicators} sub={batch.totals.ineligible ? `${batch.totals.ineligible} kept local` : undefined} />
+        <Metric
+          label="Indicators"
+          value={batch.totals.indicators}
+          sub={batch.totals.ineligible ? `${batch.totals.ineligible} kept local` : undefined}
+        />
         <Metric label="High risk" value={risk.high} tone={risk.high ? 'text-red-600 dark:text-red-400' : ''} />
         <Metric label="Medium risk" value={risk.medium} tone={risk.medium ? 'text-amber-600 dark:text-amber-400' : ''} />
-        <Metric label="Completed lookups" value={`${c.completed}/${c.total}`} tone="text-emerald-600 dark:text-emerald-400" sub={c.cached ? `${c.cached} cached` : undefined} />
+        <Metric
+          label="Completed lookups"
+          value={`${c.completed}/${c.total}`}
+          tone="text-emerald-600 dark:text-emerald-400"
+          sub={c.cached ? `${c.cached} cached` : undefined}
+        />
         <Metric label="Pending lookups" value={c.queued + c.running} />
         <Metric label="Failed lookups" value={c.failed} tone={c.failed ? 'text-red-600 dark:text-red-400' : ''} />
-        <Metric label="Disagreements" value={batch.summary?.disagreements ?? 0} tone={batch.summary?.disagreements ? 'text-amber-600 dark:text-amber-400' : ''} />
+        <Metric
+          label="Disagreements"
+          value={batch.summary?.disagreements ?? 0}
+          tone={batch.summary?.disagreements ? 'text-amber-600 dark:text-amber-400' : ''}
+        />
       </div>
 
       <ProviderProgressPanel batch={batch} />
       <ResultsTable batch={batch} version={version} selected={selected} onSelect={setSelected} />
 
-      {selected !== null && <DetailPanel batchId={batch.id} index={selected} version={version} onClose={() => setSelected(null)} onChanged={reload} />}
+      {selected !== null && (
+        <DetailPanel
+          batchId={batch.id}
+          index={selected}
+          version={version}
+          canRetry={canManage}
+          onClose={() => setSelected(null)}
+          onChanged={reload}
+        />
+      )}
     </main>
   );
 }
