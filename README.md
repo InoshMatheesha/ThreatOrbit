@@ -12,7 +12,7 @@ Bulk IOC triage for SOC teams. Paste hundreds of IPs, hashes, domains and URLs, 
 | **Providers** | Read-only lookups: nothing is ever uploaded or submitted for analysis. Each provider gets its own rate limit, concurrency, timeout, exponential-backoff retries, `Retry-After`/HTTP 429 handling and a persistent daily-quota guard. |
 | **Honest results** | A provider either has a record or it doesn't. Timeouts, auth failures, quota exhaustion and provider errors are reported as such and never counted as clean. |
 | **Risk** | High / Medium / Low / Unknown, from per-provider, per-indicator-type rules that you can configure. Every level lists its reasons. Disagreement between providers is called out explicitly. |
-| **Batches** | Background queue (BullMQ on Redis, or in-process) with live progress, per-provider ETAs, cancel, retry one or all failed lookups, and automatic resume after a restart. Fresh results are cached for 24 h by default. |
+| **Batches** | Queued lookups with live progress, per-provider ETAs, cancel, retry one or all failed lookups, and automatic resume after interruptions. Fresh results are cached for 24 h by default. |
 | **Dashboard** | Metrics, per-provider progress, and a results table filterable by risk, type, provider, status and disagreement, with search, sort and pagination. A detail panel shows every provider's evidence, tags, references and permalinks. |
 | **Exports** | CSV (one row per indicator × provider, protected against formula injection, Excel-friendly UTF-8) and JSON. |
 | **Team** | Accounts with **admin** and **analyst** roles. Analysts see the whole team's batches but can only change their own. Admins manage the team, view the audit log, test provider keys and can delete history. |
@@ -21,69 +21,76 @@ Bulk IOC triage for SOC teams. Paste hundreds of IPs, hashes, domains and URLs, 
 ## Architecture
 
 ```
-Browser ──> Vercel (React SPA, /api/* rewrite) ──> Render (Node.js API + queue workers) ──> MongoDB Atlas
-                                                              │
-                                                              └──> VirusTotal · AbuseIPDB · OTX · URLhaus
+Browser ──> Vercel ──┬── static React app
+                     └── /api/*  Node.js function (Express API) ──> MongoDB Atlas
+                                        │
+                                        └──> VirusTotal · AbuseIPDB · OTX · URLhaus
 ```
 
+- **One domain:** the API runs as a Vercel serverless function on the same domain as the website.
+- **Queue in MongoDB:** Vercel has no always-on workers, so lookups wait in MongoDB and are processed in short bursts. The bursts come from the open batch page, plus an optional free scheduler.
+- **Shared limits:** rate limits, retries, back-off and daily quotas are coordinated through the database, so they hold across every function instance.
+- **Self-hosting:** the same code also runs as a normal long-running server, with BullMQ on Redis or an in-process queue (see Local development).
+
 ```
-frontend/         React 19 + Vite + Tailwind CSS 4
-  vercel.json     Vercel build, /api proxy rewrite, security headers
+frontend/              React 19 + Vite + Tailwind CSS 4
 backend/
-  src/parser/     offline IOC parser (validation, refang, IDN, dedupe, extraction, CSV)
-  src/providers/  one adapter per provider; allowlisted, timed HTTP client; registry
-  src/queue/      BullMQ (one queue + rate limiter per provider) or in-process queue
-  src/services/   enrichment, risk engine, auth, exports, audit, retention
-  src/models/     Batch, EnrichmentResult, Indicator, User, Session, AuditEvent, ProviderUsage
-render.yaml       Render Blueprint for the API
-docker-compose.yml MongoDB + Redis for local development
+  src/parser/          offline IOC parser (validation, refang, IDN, dedupe, extraction, CSV)
+  src/providers/       one adapter per provider; allowlisted, timed HTTP client; registry
+  src/queue/           database queue (serverless), BullMQ, or in-process
+  src/services/        enrichment, risk engine, auth, exports, audit, retention
+  src/models/          Batch, EnrichmentResult, Indicator, User, Session, AuditEvent, usage and throttle state
+  src/serverless.ts    Vercel function entry
+  src/server.ts        long-running server entry
+scripts/build-vercel.mjs  builds the Vercel output (static site + bundled API function)
+vercel.json            Vercel project settings
+docker-compose.yml     MongoDB + Redis for local development
 ```
 
-## Deploy (Vercel + Render + MongoDB Atlas)
-
-All three services have free tiers. Do the steps in this order.
+## Deploy (Vercel + MongoDB Atlas, free, no card)
 
 ### 1. Database: MongoDB Atlas
 
-1. Create a free account at <https://www.mongodb.com/cloud/atlas/register> and create an **M0 (free)** cluster. AWS Singapore is a good region if you are in South Asia.
-2. Go to **Database Access** → **Add database user** and create a user with a strong password. This password is separate from your app login.
-3. Go to **Network Access** → **Add IP address** → **Allow access from anywhere** (`0.0.0.0/0`). Render's free plan has no fixed IP; access is still protected by the database password.
-4. Go to **Connect** → **Drivers** and copy the connection string. Add a database name before the `?`, like this:
-   `mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/threat_intel_hub?retryWrites=true&w=majority`
+1. Create a free **M0** cluster at <https://www.mongodb.com/cloud/atlas/register>.
+2. Under **Database & Network Access → Database Users**, create a user with an autogenerated password (letters and numbers only).
+3. Under **Database & Network Access → IP Access List**, click **Add IP Address → Allow access from anywhere** (`0.0.0.0/0`). Vercel functions have no fixed IP; access is still protected by the database password.
+4. Under **Connect → Drivers**, copy the connection string, put your password in it, and add the database name before the `?`:
+   `mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/threat_intel_hub?retryWrites=true&w=majority&appName=Cluster0`
 
-### 2. Backend: Render
+### 2. Website and API: Vercel
 
-1. Sign in at <https://render.com> with GitHub.
-2. Go to **New** → **Blueprint**, pick this repository, and click **Apply**. Render reads `render.yaml`.
-3. Render prompts for the secret values:
+1. Sign in at <https://vercel.com> with GitHub and go to **Add New → Project** → import this repository.
+2. Leave **Root Directory** at the repository root and **Framework Preset** at *Other*. The build settings come from `vercel.json`.
+3. Open **Environment Variables** and add:
 
-| Variable | Value |
+| Name | Value |
 |---|---|
 | `MONGODB_URI` | The Atlas connection string from step 1. |
-| `ALLOWED_ORIGINS` | Your Vercel URL, e.g. `https://threatorbit.vercel.app`. If you don't know it yet, leave it empty and come back after step 3. |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | Your first admin login. The password needs 12+ characters. |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` | Your first admin login. The password needs 12+ characters. |
 | `VIRUSTOTAL_API_KEY`, `ABUSEIPDB_API_KEY`, `OTX_API_KEY`, `URLHAUS_AUTH_KEY` | Your provider keys. |
+| `CRON_SECRET` *(optional)* | A random string of 16+ characters, used for background processing (step 4). |
 
-4. Wait for the deploy to finish, then open `https://<your-service>.onrender.com/api/health`. It should show `{"data":{"status":"ok",...}}`.
-5. Copy the service URL. If the name `threatorbit-api` was free, it is `https://threatorbit-api.onrender.com`.
+4. Click **Deploy**. When it finishes, open your site (e.g. `https://threatorbit.vercel.app`) and sign in.
+5. Open **Providers** and click **Test key** on each provider. Then open **Team** and add your teammates.
 
-The free plan sleeps after 15 minutes without traffic, and the first request after that takes about 30 seconds while it wakes up. Unfinished lookups resume automatically when it wakes. For an always-on service, switch the plan to Starter.
+Every `git push` to `main` redeploys automatically.
 
-### 3. Frontend: Vercel
+### 3. How batches progress
 
-1. If your Render URL is **not** `https://threatorbit-api.onrender.com`, edit `frontend/vercel.json`, put your URL in the `/api/:path*` rewrite, and commit the change.
-2. Sign in at <https://vercel.com> with GitHub and go to **Add New** → **Project** → import this repository.
-3. Set **Root Directory** to `frontend`. The build settings come from `frontend/vercel.json`, so leave them as they are. Click **Deploy**.
-4. Copy your site URL, e.g. `https://threatorbit.vercel.app`. On Render, set `ALLOWED_ORIGINS` to that URL; Render redeploys automatically.
+While a batch page is open, the browser keeps asking the API to process the next lookups (about every 1.5 seconds). Each provider's free-tier rate limit is respected: VirusTotal gets 4 lookups a minute, so a large batch takes a while.
 
-### 4. First sign-in
+If you close the page, the batch pauses and picks up where it stopped as soon as anyone opens it again.
 
-1. Open your Vercel URL and sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
-2. Open **Providers** and click **Test key** on each provider. Each should say *Key works*.
-3. Open **Team** → **Add member** to create accounts for your teammates. Share their temporary passwords privately; they can change them from the profile menu.
-4. You can now remove `ADMIN_PASSWORD` from Render if you like. It is only used while no users exist.
+### 4. Optional: keep batches running with the page closed (free, no card)
 
-Every later `git push` to the deployed branch redeploys both services automatically.
+1. Set `CRON_SECRET` on Vercel (step 2.3) and redeploy.
+2. Create a free account at <https://cron-job.org> and add a new cron job:
+
+| Setting | Value |
+|---|---|
+| URL | `https://<your-site>/api/cron/tick` |
+| Schedule | Every minute |
+| Advanced → Headers | `Authorization: Bearer <your CRON_SECRET>` |
 
 ## Local development
 
@@ -110,11 +117,12 @@ Every setting is an environment variable. See [`backend/.env.example`](backend/.
 
 | Variable | Purpose |
 |---|---|
-| `NODE_ENV=production` | Secure (HTTPS-only) cookies, and no embedded database fallback. |
 | `MONGODB_URI` | MongoDB connection string. |
-| `REDIS_URL` + `QUEUE_MODE=bullmq` | Optional Redis (e.g. Upstash) for a durable job queue. The default `memory` queue resumes from MongoDB after a restart. |
-| `TRUST_PROXY` | Number of proxies in front of the app: `2` behind Vercel → Render. |
-| `ALLOWED_ORIGINS` | Your site URL(s), for the cross-site request check. |
+| `QUEUE_MODE` | `database` on Vercel (set automatically). Self-hosted: `auto` uses BullMQ when `REDIS_URL` answers, otherwise an in-process queue. |
+| `CRON_SECRET` | Enables `GET /api/cron/tick` for an external scheduler. |
+| `TICK_BUDGET_MS` | How long one queue tick processes lookups. Default 20 s. |
+| `TRUST_PROXY` | Number of proxies in front of the app. Set automatically on Vercel. |
+| `ALLOWED_ORIGINS` | Extra site URL(s) allowed to make changes, for the cross-site request check. Same-site requests are always allowed. |
 | `SESSION_TTL_HOURS` | How long a sign-in lasts. Default 12. |
 | `RETENTION_DAYS` / `AUDIT_RETENTION_DAYS` | Automatic data purge. Defaults are 30 and 180. |
 | `<PROVIDER>_REQUESTS_PER_MINUTE` / `<PROVIDER>_DAILY_LIMIT` | Raise these for paid API plans. |
@@ -158,7 +166,7 @@ The defaults live in `backend/src/config/riskRules.ts`. To override any part, po
 - **Cross-site requests:** state-changing requests from other origins are rejected, on top of the SameSite cookie protection.
 - **Provider keys:** they exist only as server environment variables. They are never sent to the browser, logged or stored, and a test sweeps every endpoint for them.
 - **Outbound requests (SSRF guard):** https only, to each provider's allowlisted host, with redirects refused and a hard timeout.
-- **Browser hardening:** a strict Content-Security-Policy and security headers on both Vercel and the API, request validation (Zod), checks on upload size, type and encoding, and React escaping. Provider links are only rendered when they are `https://`.
+- **Browser hardening:** a strict Content-Security-Policy and security headers on the site and the API, request validation (Zod), checks on upload size, type and encoding, and React escaping. Provider links are only rendered when they are `https://`.
 - **Logs and exports:** request logs record only the method, path and status, never query strings or bodies. CSV exports are protected against formula injection. The audit log never records indicator values.
 
 ## API

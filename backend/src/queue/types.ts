@@ -16,11 +16,21 @@ export type ProcessOutcome =
 
 export type LookupProcessor = (job: LookupJob) => Promise<ProcessOutcome>;
 
+export type QueueMode = 'bullmq' | 'memory' | 'database';
+
 export interface LookupQueue {
-  readonly mode: 'bullmq' | 'memory';
+  readonly mode: QueueMode;
   start(processor: LookupProcessor, limits: Map<ProviderId, ProviderLimits>): Promise<void>;
   enqueue(jobs: LookupJob[], delayMs?: number): Promise<void>;
   /** Drop waiting/delayed jobs for a batch. The processor also re-checks batch state. */
   cancelBatch(batchId: string): Promise<void>;
   close(): Promise<void>;
+  /** Database queue only: process due lookups for up to `budgetMs`, then return. */
+  drain?(budgetMs: number): Promise<DrainResult>;
+}
+
+export interface DrainResult {
+  processed: number;
+  /** Lookups still waiting (queued or running) across all batches. */
+  pending: number;
 }

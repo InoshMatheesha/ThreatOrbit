@@ -11,6 +11,7 @@ import {
   Indicator,
   ProviderUsage,
   TERMINAL_BATCH_STATUSES,
+  acquireLock,
   type BatchDoc,
   type BatchItem,
   type BatchStatus,
@@ -82,10 +83,15 @@ export class EnrichmentService {
     return this.deps.registry;
   }
 
-  async start({ background = true } = {}) {
+  /**
+   * @param background run periodic sweeps and retention in-process (long-running servers only)
+   * @param recover re-queue lookups left running by a previous process. Off for serverless,
+   *   where other instances may be mid-lookup; the database queue recovers stale ones itself.
+   */
+  async start({ background = true, recover = true } = {}) {
     const limits = new Map(this.deps.registry.all().map((r) => [r.adapter.id, r.limits]));
     await this.deps.queue.start((job) => this.processLookup(job), limits);
-    await this.recoverInterrupted();
+    if (recover) await this.recoverInterrupted();
     if (background) {
       this.timers.push(setInterval(() => void this.sweep(), SWEEP_INTERVAL_MS).unref());
       this.timers.push(setInterval(() => void this.purgeExpired(), RETENTION_INTERVAL_MS).unref());
@@ -371,7 +377,7 @@ export class EnrichmentService {
     const ids = results.map((r) => r._id);
     await EnrichmentResult.updateMany(
       { _id: { $in: ids }, status: 'failed' },
-      { $set: { status: 'queued', attempts: 0 }, $unset: { error: 1 } },
+      { $set: { status: 'queued', attempts: 0 }, $unset: { error: 1, nextAttemptAt: 1 } },
     );
     await this.deps.queue.enqueue(results.map((r) => ({ resultId: String(r._id), batchId: r.batchId, provider: r.provider, attempt: 1 })));
     for (const batchId of new Set(results.map((r) => r.batchId))) await this.refreshBatch(batchId);
@@ -396,7 +402,7 @@ export class EnrichmentService {
     const claimed = await EnrichmentResult.findOneAndUpdate(
       { _id: job.resultId, status: 'queued' },
       { $set: { status: 'running' }, $inc: { attempts: 1 } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (!claimed) return { kind: 'done' };
 
@@ -454,6 +460,7 @@ export class EnrichmentService {
             {
               $set: {
                 status: 'queued',
+                nextAttemptAt: new Date(Date.now() + delayMs),
                 error: {
                   kind,
                   message: `${e.message}; retrying`,
@@ -545,6 +552,18 @@ export class EnrichmentService {
       this.deps.logger.error({ err: (err as Error).message }, 'Retention purge failed');
       return { batches: 0, lookups: 0, indicators: 0 };
     }
+  }
+
+  /**
+   * Advance a database-backed queue for up to `budgetMs` (serverless hosting) and run
+   * the hourly retention purge. Returns null for queues that process on their own.
+   */
+  async tick(budgetMs: number) {
+    const { queue } = this.deps;
+    if (!queue.drain) return null;
+    const result = await queue.drain(budgetMs);
+    if (await acquireLock('retention-purge', RETENTION_INTERVAL_MS)) await this.purgeExpired();
+    return result;
   }
 
   /** Make one real request with a harmless indicator to check the key works. */

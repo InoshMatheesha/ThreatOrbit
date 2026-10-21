@@ -180,7 +180,7 @@ export function BatchPage({ id }: { id: string }) {
         <Notice>
           {batch.status === 'cancelling'
             ? 'Cancelling: waiting for in-flight lookups to finish.'
-            : 'Enrichment in progress. Risk levels marked … are provisional until every lookup for that indicator finishes. You can leave this page; the batch keeps running.'}
+            : 'Enrichment in progress. Risk levels marked … are provisional until every lookup for that indicator finishes. Keeping this page open gives the fastest progress.'}
         </Notice>
       )}
 

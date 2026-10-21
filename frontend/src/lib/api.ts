@@ -229,7 +229,7 @@ export interface Health {
   status: string;
   enrichment: null | {
     database: { connected: boolean; mode: 'external' | 'embedded' };
-    queue: { mode: 'bullmq' | 'memory' };
+    queue: { mode: 'bullmq' | 'memory' | 'database' };
     settings?: { maxBatchSize: number; retentionDays: number; cacheTtlHours: number };
   };
 }
@@ -313,6 +313,8 @@ export const api = {
   cancelBatch: (id: string) => send<Batch>('POST', `/api/batches/${id}/cancel`),
   retryFailed: (id: string) => send<{ requeued: number }>('POST', `/api/batches/${id}/retry-failed`),
   retryResult: (resultId: string) => send<{ id: string }>('POST', `/api/results/${resultId}/retry`),
+  /** Advance the server's database queue (serverless hosting). A no-op on servers with their own workers. */
+  tickQueue: () => send<{ mode: 'bullmq' | 'memory' | 'database'; processed: number; pending: number | null }>('POST', '/api/queue/tick'),
   deleteBatch: (id: string) => send<void>('DELETE', `/api/batches/${id}`),
   deleteAll: () => send<{ batches: number }>('DELETE', '/api/batches', { confirm: 'DELETE ALL' }),
   providers: () => getWithMeta<ProviderInfo[], { queueMode: 'bullmq' | 'memory' }>('/api/providers'),

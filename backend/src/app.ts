@@ -9,6 +9,7 @@ import { authenticate, originCheck, requireAuth } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiRateLimit } from './middleware/rateLimit.js';
 import { requestLogger } from './middleware/requestLogger.js';
+import { queueHandlers } from './controllers/queueController.js';
 import { authRouter, usersRouter } from './routes/auth.js';
 import { batchesRouter } from './routes/batches.js';
 import { enrichmentRouter } from './routes/enrichment.js';
@@ -51,11 +52,16 @@ export function createApp(config: AppConfig, logger: Logger = createLogger(confi
       ...(options.databaseMode ? { databaseMode: options.databaseMode } : {}),
     }),
   );
+  if (enrichment) {
+    // Before the auth gate: authenticated by its own shared secret.
+    app.all('/api/cron/tick', queueHandlers(config, enrichment).cron);
+  }
   if (auth) {
     app.use('/api/auth', authRouter(config, auth));
     app.use('/api', requireAuth);
     app.use('/api/users', usersRouter(logger));
   }
+  if (enrichment) app.post('/api/queue/tick', queueHandlers(config, enrichment).tick);
   app.use('/api/batches', batchesRouter(config, enrichment));
   app.use('/api', enrichmentRouter(config, logger, enrichment));
 

@@ -74,6 +74,18 @@ Accepts any of `{ name, role, active, password }`. Changing the role, deactivati
 
 ---
 
+## Queue processing
+
+### `POST /api/queue/tick`
+
+Signed-in users. On serverless hosting (database queue) it processes due lookups for up to `TICK_BUDGET_MS`, respecting every provider's rate limit, and returns `{ mode, processed, pending }`. The dashboard calls it repeatedly while a batch is open. On self-hosted servers with their own workers it returns at once with `processed: 0`.
+
+### `GET|POST /api/cron/tick`
+
+Does the same for an external scheduler (e.g. cron-job.org). It needs the header `Authorization: Bearer <CRON_SECRET>`, and returns `404` when `CRON_SECRET` is not set.
+
+---
+
 ## Health and providers
 
 ### `GET /api/health`
