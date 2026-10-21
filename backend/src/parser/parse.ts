@@ -19,7 +19,10 @@ const MAX_LINE_LENGTH = 8192;
 const COMMENT_RE = /^(?:#|\/\/)/;
 
 export class InputTooLargeError extends Error {
-  constructor(readonly lines: number, readonly maxLines: number) {
+  constructor(
+    readonly lines: number,
+    readonly maxLines: number,
+  ) {
     super(`Input has ${lines} lines; the maximum is ${maxLines}`);
     this.name = 'InputTooLargeError';
   }
@@ -47,9 +50,7 @@ function splitLines(text: string, maxLines: number): string[] {
 function classifyCandidate(line: number, original: string): Classified {
   const { value, changed } = refang(original);
   const outcome: ClassifyOutcome =
-    original.length > MAX_LINE_LENGTH
-      ? { ok: false, error: `Line exceeds ${MAX_LINE_LENGTH} characters` }
-      : classifyIndicator(value);
+    original.length > MAX_LINE_LENGTH ? { ok: false, error: `Line exceeds ${MAX_LINE_LENGTH} characters` } : classifyIndicator(value);
   return { line, original, value, refanged: changed, outcome };
 }
 

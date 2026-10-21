@@ -28,9 +28,7 @@ export function usePreview(input: PreviewInput, mode: ParseMode): PreviewState {
     const timer = setTimeout(
       () => {
         const request =
-          input.kind === 'file'
-            ? previewFile(input.file, mode, controller.signal)
-            : previewText(input.text, mode, controller.signal);
+          input.kind === 'file' ? previewFile(input.file, mode, controller.signal) : previewText(input.text, mode, controller.signal);
         request
           .then((result) => setState({ result, error: null, loading: false }))
           .catch((err: unknown) => {

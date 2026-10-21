@@ -7,6 +7,8 @@ interface Props {
   batchId: string;
   index: number;
   version: number;
+  /** Whether the current user may retry lookups in this batch. */
+  canRetry: boolean;
   onClose: () => void;
   onChanged: () => void;
 }
@@ -15,7 +17,12 @@ interface Props {
 function SafeLink({ href, children }: { href: string; children: React.ReactNode }) {
   if (!/^https:\/\//i.test(href)) return <span className="break-all">{children}</span>;
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="break-all text-sky-700 underline hover:text-sky-900 dark:text-sky-400">
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="break-all text-sky-700 underline hover:text-sky-900 dark:text-sky-400"
+    >
       {children}
     </a>
   );
@@ -64,23 +71,31 @@ const METRIC_LABELS: Record<string, string> = {
   riot: 'Known business service',
   classification: 'Classification',
   name: 'Name',
-  synthetic: 'Synthetic',
 };
 
-function ProviderCard({ result, provider, onRetry }: { result?: ResultView; provider: ProviderSnapshot; onRetry: (id: string) => Promise<void> }) {
+function ProviderCard({
+  result,
+  provider,
+  onRetry,
+}: {
+  result?: ResultView;
+  provider: ProviderSnapshot;
+  onRetry?: (id: string) => Promise<void>;
+}) {
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!result) {
     return (
       <div className="rounded border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500 dark:border-slate-700">
-        <span className="font-medium">{provider.name}</span>: {provider.state !== 'ready' ? `not used (${provider.state})` : 'does not support this indicator type'}
+        <span className="font-medium">{provider.name}</span>:{' '}
+        {provider.state !== 'ready' ? `not used (${provider.state})` : 'does not support this indicator type'}
       </div>
     );
   }
 
-  const metrics = Object.entries(result.metrics ?? {}).filter(([k]) => k !== 'synthetic');
-  const retryable = result.status === 'failed' && result.error?.kind !== 'invalid_request';
+  const metrics = Object.entries(result.metrics ?? {});
+  const retryable = Boolean(onRetry) && result.status === 'failed' && result.error?.kind !== 'invalid_request';
 
   return (
     <div className="rounded border border-slate-200 text-xs dark:border-slate-700">
@@ -90,7 +105,9 @@ function ProviderCard({ result, provider, onRetry }: { result?: ResultView; prov
           <ResultChip result={result} />
         </div>
         <span className="text-[11px] text-slate-500" title={result.lookedUpAt ? `Lookup time: ${dateTime(result.lookedUpAt)}` : undefined}>
-          {result.lookedUpAt ? `${result.cacheStatus === 'hit' ? 'cached · ' : ''}looked up ${relativeTime(result.lookedUpAt)}` : result.status}
+          {result.lookedUpAt
+            ? `${result.cacheStatus === 'hit' ? 'cached · ' : ''}looked up ${relativeTime(result.lookedUpAt)}`
+            : result.status}
           {result.attempts > 1 ? ` · ${result.attempts} attempts` : ''}
         </span>
       </div>
@@ -106,8 +123,8 @@ function ProviderCard({ result, provider, onRetry }: { result?: ResultView; prov
           <div>
             <div className="mb-0.5 flex justify-between text-[11px] text-slate-500">
               <span>
-                {result.detections.malicious} malicious · {result.detections.suspicious} suspicious · {result.detections.harmless} harmless ·{' '}
-                {result.detections.undetected} undetected
+                {result.detections.malicious} malicious · {result.detections.suspicious} suspicious · {result.detections.harmless} harmless
+                · {result.detections.undetected} undetected
               </span>
             </div>
             <div className="flex h-1.5 overflow-hidden rounded bg-slate-200 dark:bg-slate-800">
@@ -120,7 +137,16 @@ function ProviderCard({ result, provider, onRetry }: { result?: ResultView; prov
           <div>
             <div className="mb-0.5 text-[11px] text-slate-500">Abuse confidence {result.abuseConfidence}%</div>
             <div className="h-1.5 overflow-hidden rounded bg-slate-200 dark:bg-slate-800">
-              <div className={result.abuseConfidence >= 75 ? 'h-full bg-red-500' : result.abuseConfidence >= 25 ? 'h-full bg-amber-400' : 'h-full bg-emerald-500'} style={{ width: `${result.abuseConfidence}%` }} />
+              <div
+                className={
+                  result.abuseConfidence >= 75
+                    ? 'h-full bg-red-500'
+                    : result.abuseConfidence >= 25
+                      ? 'h-full bg-amber-400'
+                      : 'h-full bg-emerald-500'
+                }
+                style={{ width: `${result.abuseConfidence}%` }}
+              />
             </div>
           </div>
         )}
@@ -171,7 +197,7 @@ function ProviderCard({ result, provider, onRetry }: { result?: ResultView; prov
               setRetrying(true);
               setError(null);
               try {
-                await onRetry(result.id);
+                await onRetry!(result.id);
               } catch (e) {
                 setError((e as Error).message);
               } finally {
@@ -188,10 +214,9 @@ function ProviderCard({ result, provider, onRetry }: { result?: ResultView; prov
   );
 }
 
-export function DetailPanel({ batchId, index, version, onClose, onChanged }: Props) {
+export function DetailPanel({ batchId, index, version, canRetry, onClose, onChanged }: Props) {
   const [item, setItem] = useState<ItemView | null>(null);
   const [providers, setProviders] = useState<ProviderSnapshot[]>([]);
-  const [demo, setDemo] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -203,7 +228,6 @@ export function DetailPanel({ batchId, index, version, onClose, onChanged }: Pro
         if (cancelled) return;
         setItem(r.data);
         setProviders(r.meta.providers);
-        setDemo(r.meta.demo);
         setError(null);
       })
       .catch((e: Error) => !cancelled && setError(e.message));
@@ -238,7 +262,6 @@ export function DetailPanel({ batchId, index, version, onClose, onChanged }: Pro
         )}
         {item && (
           <>
-            {demo && <Notice tone="demo">SYNTHETIC demo data. These results are generated, not real threat intelligence.</Notice>}
             <div>
               <div className="flex items-start justify-between gap-2">
                 <div className="font-mono text-sm break-all">{item.value}</div>
@@ -259,8 +282,8 @@ export function DetailPanel({ batchId, index, version, onClose, onChanged }: Pro
                 <RiskBadge level={item.risk.level} provisional={item.risk.provisional} />
                 <span className="text-slate-500">{TYPE_LABELS[item.type]}</span>
                 <span className="text-slate-500">
-                  {item.risk.coverage.withRecord} with record · {item.risk.coverage.noRecord} no record · {item.risk.coverage.failed} failed ·{' '}
-                  {item.risk.coverage.pending} pending
+                  {item.risk.coverage.withRecord} with record · {item.risk.coverage.noRecord} no record · {item.risk.coverage.failed} failed
+                  · {item.risk.coverage.pending} pending
                 </span>
               </div>
             </div>
@@ -274,7 +297,11 @@ export function DetailPanel({ batchId, index, version, onClose, onChanged }: Pro
               </ul>
             </div>
 
-            {item.risk.disagreement && <Notice tone="warn"><strong>Providers disagree:</strong> {item.risk.disagreement.summary}.</Notice>}
+            {item.risk.disagreement && (
+              <Notice tone="warn">
+                <strong>Providers disagree:</strong> {item.risk.disagreement.summary}.
+              </Notice>
+            )}
 
             {item.notes.length > 0 && (
               <div className="text-amber-700 dark:text-amber-400">
@@ -302,16 +329,20 @@ export function DetailPanel({ batchId, index, version, onClose, onChanged }: Pro
                     key={p.id}
                     provider={p}
                     result={item.results[p.id]}
-                    onRetry={async (id) => {
-                      await api.retryResult(id);
-                      onChanged();
-                    }}
+                    {...(canRetry
+                      ? {
+                          onRetry: async (id: string) => {
+                            await api.retryResult(id);
+                            onChanged();
+                          },
+                        }
+                      : {})}
                   />
                 ))}
               {providers
                 .filter((p) => p.state !== 'ready' && !item.results[p.id])
                 .map((p) => (
-                  <ProviderCard key={p.id} provider={p} onRetry={async () => {}} />
+                  <ProviderCard key={p.id} provider={p} />
                 ))}
             </div>
           </>

@@ -45,7 +45,9 @@ describe('app', () => {
     const { app } = testApp({ VIRUSTOTAL_API_KEY: secret, ABUSEIPDB_API_KEY: secret, OTX_API_KEY: secret });
     const responses = await Promise.all([
       request(app).get('/api/health'),
-      request(app).post('/api/batches/preview').send({ text: `8.8.8.8\n${secret}` }),
+      request(app)
+        .post('/api/batches/preview')
+        .send({ text: `8.8.8.8\n${secret}` }),
       request(app).post('/api/batches/preview').send({ text: 'x', bogus: secret }),
       request(app).get('/api/missing'),
     ]);
@@ -64,9 +66,21 @@ describe('config', () => {
     expect(config.limits).toMatchObject({ maxBatchSize: 500, maxUploadBytes: 2 * 1024 * 1024 });
   });
 
-  it('refuses to bind beyond localhost without authentication unless explicitly allowed', () => {
-    expect(() => loadConfig({ HOST: '0.0.0.0' })).toThrow(/authentication is not implemented/);
-    expect(loadConfig({ HOST: '0.0.0.0', ALLOW_UNAUTHENTICATED_REMOTE: 'true' }).host).toBe('0.0.0.0');
+  it('validates the bootstrap admin settings', () => {
+    expect(() => loadConfig({ ADMIN_EMAIL: 'admin@example.com' })).toThrow(/both ADMIN_EMAIL and ADMIN_PASSWORD/);
+    expect(() => loadConfig({ ADMIN_EMAIL: 'admin@example.com', ADMIN_PASSWORD: 'short' })).toThrow(/at least 12/);
+    expect(loadConfig({ ADMIN_EMAIL: 'Admin@Example.com', ADMIN_PASSWORD: 'long-enough-password' }).auth.bootstrapAdmin).toMatchObject({
+      email: 'admin@example.com',
+    });
+  });
+
+  it('uses secure cookies in production and trusts the configured proxy hops', () => {
+    expect(loadConfig({ NODE_ENV: 'production' }).auth.cookieSecure).toBe(true);
+    expect(loadConfig({ NODE_ENV: 'development' }).auth.cookieSecure).toBe(false);
+    expect(loadConfig({ TRUST_PROXY: '2', ALLOWED_ORIGINS: 'https://a.example/, https://b.example' })).toMatchObject({
+      trustProxy: 2,
+      allowedOrigins: ['https://a.example', 'https://b.example'],
+    });
   });
 
   it('rejects invalid values with a clear message', () => {

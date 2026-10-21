@@ -8,14 +8,7 @@ export type Verdict = 'malicious' | 'suspicious' | 'no_detections' | 'benign' | 
 export type LookupOutcome = 'found' | 'not_found';
 
 export type ErrorKind =
-  | 'timeout'
-  | 'rate_limited'
-  | 'quota_exhausted'
-  | 'auth'
-  | 'provider_error'
-  | 'network'
-  | 'invalid_request'
-  | 'interrupted';
+  'timeout' | 'rate_limited' | 'quota_exhausted' | 'auth' | 'provider_error' | 'network' | 'invalid_request' | 'interrupted';
 
 const RETRYABLE: ReadonlySet<ErrorKind> = new Set(['timeout', 'rate_limited', 'provider_error', 'network', 'interrupted']);
 
@@ -77,7 +70,10 @@ export interface HttpResponse {
 }
 
 export interface ProviderHttp {
-  request(url: string, init?: { method?: 'GET' | 'POST'; headers?: Record<string, string>; form?: Record<string, string> }): Promise<HttpResponse>;
+  request(
+    url: string,
+    init?: { method?: 'GET' | 'POST'; headers?: Record<string, string>; form?: Record<string, string> },
+  ): Promise<HttpResponse>;
 }
 
 export interface LookupContext {
@@ -105,6 +101,5 @@ export interface ProviderAdapter {
   defaultLimits: ProviderLimits;
   /** Indicator used by the "test key" action. */
   probe: IndicatorRef;
-  synthetic?: boolean;
   lookup(indicator: IndicatorRef, ctx: LookupContext): Promise<ProviderFinding>;
 }

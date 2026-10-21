@@ -15,7 +15,6 @@ const booleanish = z.union([z.boolean(), z.enum(['true', 'false']).transform((v)
 
 const createFields = {
   mode: z.enum(PARSE_MODES).default('lines'),
-  demo: booleanish.default(false),
   label: z.string().trim().max(120).optional(),
   acknowledgeThirdPartySharing: booleanish.default(false),
 };
@@ -38,15 +37,16 @@ const resultsQuerySchema = z.object({
 });
 
 const listQuerySchema = z.object({
+  mine: booleanish.optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
 
-/** Batch metadata for clients: never the session id, and items only when asked for. */
-type BatchLike = Omit<BatchDoc, 'items' | 'sessionId'> & Partial<Pick<BatchDoc, 'items' | 'sessionId'>>;
+/** Batch metadata for clients; items are served separately through /results. */
+type BatchLike = Omit<BatchDoc, 'items'> & Partial<Pick<BatchDoc, 'items'>>;
 
 export function publicBatch(batch: BatchLike) {
-  const { sessionId: _sid, items: _items, ...rest } = batch;
+  const { items: _items, ...rest } = batch;
   return { ...rest, id: batch._id, terminal: TERMINAL_BATCH_STATUSES.has(batch.status) };
 }
 
@@ -87,7 +87,7 @@ function parseInput(req: Request, config: AppConfig) {
 export function batchHandlers(config: AppConfig, service: EnrichmentService) {
   const create: RequestHandler = async (req, res) => {
     const { parsed, fields, source } = parseInput(req, config);
-    if (!fields.demo && !fields.acknowledgeThirdPartySharing) {
+    if (!fields.acknowledgeThirdPartySharing) {
       throw new ApiError(
         400,
         'ACKNOWLEDGEMENT_REQUIRED',
@@ -95,8 +95,7 @@ export function batchHandlers(config: AppConfig, service: EnrichmentService) {
       );
     }
     const batch = await service.createBatch(parsed, {
-      sessionId: req.sessionId,
-      demo: fields.demo,
+      actor: req.user!,
       source,
       ...(fields.label ? { label: fields.label } : {}),
     });
@@ -104,10 +103,11 @@ export function batchHandlers(config: AppConfig, service: EnrichmentService) {
   };
 
   const list: RequestHandler = async (req, res) => {
-    const { page, pageSize } = listQuerySchema.parse(req.query);
+    const { page, pageSize, mine } = listQuerySchema.parse(req.query);
+    const filter = mine ? { 'createdBy.id': req.user!.id } : {};
     const [total, batches] = await Promise.all([
-      Batch.countDocuments(),
-      Batch.find({}, { items: 0, sessionId: 0 })
+      Batch.countDocuments(filter),
+      Batch.find(filter, { items: 0 })
         .sort({ createdAt: -1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize)
@@ -127,7 +127,7 @@ export function batchHandlers(config: AppConfig, service: EnrichmentService) {
     const { total, items } = filterItems(views, query);
     res.json({
       data: items,
-      meta: { total, page: query.page, pageSize: query.pageSize, summary: riskSummary(views), demo: batch.demo, providers: batch.providers },
+      meta: { total, page: query.page, pageSize: query.pageSize, summary: riskSummary(views), providers: batch.providers },
     });
   };
 
@@ -136,7 +136,7 @@ export function batchHandlers(config: AppConfig, service: EnrichmentService) {
     const { batch, views } = await loadBatchWithViews(service, String(req.params.id));
     const view = views.find((v) => v.index === index);
     if (!view) throw new ApiError(404, 'NOT_FOUND', 'Indicator not found in this batch');
-    res.json({ data: view, meta: { demo: batch.demo, providers: batch.providers } });
+    res.json({ data: view, meta: { providers: batch.providers } });
   };
 
   const events: RequestHandler = async (req, res) => {
@@ -146,34 +146,37 @@ export function batchHandlers(config: AppConfig, service: EnrichmentService) {
   };
 
   const cancel: RequestHandler = async (req, res) => {
-    await service.cancelBatch(batchIdSchema.parse(req.params.id), req.sessionId);
+    await service.cancelBatch(batchIdSchema.parse(req.params.id), req.user!);
     res.json({ data: publicBatch((await Batch.findById(req.params.id).lean())!) });
   };
 
   const retryFailed: RequestHandler = async (req, res) => {
-    const count = await service.retryFailed(batchIdSchema.parse(req.params.id), req.sessionId);
+    const count = await service.retryFailed(batchIdSchema.parse(req.params.id), req.user!);
     res.json({ data: { requeued: count } });
   };
 
   const remove: RequestHandler = async (req, res) => {
-    await service.deleteBatch(batchIdSchema.parse(req.params.id), req.sessionId);
+    await service.deleteBatch(batchIdSchema.parse(req.params.id), req.user!);
     res.status(204).end();
   };
 
   const removeAll: RequestHandler = async (req, res) => {
     z.strictObject({ confirm: z.literal('DELETE ALL') }).parse(req.body ?? {});
-    res.json({ data: await service.deleteAllHistory(req.sessionId) });
+    res.json({ data: await service.deleteAllHistory(req.user!) });
   };
 
   const retryResult: RequestHandler = async (req, res) => {
     const id = String(req.params.id);
     if (!isValidObjectId(id)) throw new ApiError(400, 'VALIDATION_ERROR', 'Invalid result id');
-    await service.retryResult(id, req.sessionId);
+    await service.retryResult(id, req.user!);
     res.status(202).json({ data: { id, status: 'queued' } });
   };
 
   return { create, list, get, results, item, events, cancel, retryFailed, remove, removeAll, retryResult };
 }
+
+/** Long-lived connections get cut by proxies; end the stream before that and let EventSource reconnect. */
+const MAX_STREAM_MS = 25_000;
 
 /** Server-Sent Events: pushes batch progress until the batch reaches a terminal state. */
 function streamProgress(req: Request, res: Response, id: string) {
@@ -189,7 +192,7 @@ function streamProgress(req: Request, res: Response, id: string) {
   let closed = false;
   const send = async () => {
     if (closed) return;
-    const batch = await Batch.findById(id, { items: 0, sessionId: 0 }).lean();
+    const batch = await Batch.findById(id, { items: 0 }).lean();
     if (!batch) {
       res.write('event: deleted\ndata: {}\n\n');
       return finish();
@@ -206,11 +209,13 @@ function streamProgress(req: Request, res: Response, id: string) {
   };
   const poll = setInterval(() => void send().catch(() => finish()), 1000);
   const heartbeat = setInterval(() => !closed && res.write(': keep-alive\n\n'), 15_000);
+  const lifetime = setTimeout(() => finish(), MAX_STREAM_MS);
   function finish() {
     if (closed) return;
     closed = true;
     clearInterval(poll);
     clearInterval(heartbeat);
+    clearTimeout(lifetime);
     res.end();
   }
   req.on('close', finish);

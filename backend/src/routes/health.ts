@@ -11,13 +11,19 @@ export interface HealthInfo {
   service?: EnrichmentService;
 }
 
+/** Public liveness probe (used by the host). Internal details only for signed-in users. */
 export function healthRouter(info: HealthInfo = {}): Router {
   const router = Router();
-  router.get('/', (_req, res) => {
+  router.get('/', (req, res) => {
     const dbConnected = mongoose.connection.readyState === 1;
+    const status = info.service && !dbConnected ? 'degraded' : 'ok';
+    if (!req.user) {
+      res.status(status === 'ok' ? 200 : 503).json({ data: { status, service: 'threat-intel-hub' } });
+      return;
+    }
     res.json({
       data: {
-        status: info.service && !dbConnected ? 'degraded' : 'ok',
+        status,
         service: 'threat-intel-hub',
         uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
         time: new Date().toISOString(),

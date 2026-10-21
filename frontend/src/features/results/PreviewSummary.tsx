@@ -55,16 +55,20 @@ export function PreviewSummary({ result, onEnrich }: Props) {
       </div>
 
       {!limits.withinBatchLimit && (
-        <div role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-          {stats.eligible.toLocaleString()} indicators to enrich exceeds the batch limit of {limits.maxBatchSize}. Remove {limits.overBy} or split the input into several batches.
+        <div
+          role="alert"
+          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+        >
+          {stats.eligible.toLocaleString()} indicators to enrich exceeds the batch limit of {limits.maxBatchSize}. Remove {limits.overBy} or
+          split the input into several batches.
         </div>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
         <p className="max-w-3xl">
-          <strong>Before enriching:</strong> eligible indicators will be sent to third-party providers (VirusTotal, AbuseIPDB, AlienVault OTX,
-          URLhaus, GreyNoise). Don't submit indicators that are themselves sensitive, like internal hostnames or customer data in URLs. Private
-          IPs and internal domains are already kept local. Use demo mode to try the workflow without sending anything.
+          <strong>Before enriching:</strong> eligible indicators will be sent to third-party providers (VirusTotal, AbuseIPDB, AlienVault
+          OTX, URLhaus). Don't submit indicators that are themselves sensitive, like internal hostnames or customer data in URLs. Private
+          IPs and internal domains are already kept local.
         </p>
         <div className="flex items-center gap-2">
           <button type="button" className="btn" onClick={copyClean} disabled={eligible.length === 0}>

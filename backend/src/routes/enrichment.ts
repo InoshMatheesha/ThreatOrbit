@@ -5,6 +5,7 @@ import { batchHandlers } from '../controllers/batchController.js';
 import { exportHandler } from '../controllers/exportController.js';
 import { providerHandlers } from '../controllers/providerController.js';
 import type { AppConfig } from '../config/env.js';
+import { requireRole } from '../middleware/auth.js';
 import type { EnrichmentService } from '../services/enrichmentService.js';
 import { unavailable } from './unavailable.js';
 
@@ -19,8 +20,8 @@ export function enrichmentRouter(config: AppConfig, logger: Logger, service?: En
   const providers = providerHandlers(service);
   router.post('/results/:id/retry', batches.retryResult);
   router.get('/providers', providers.list);
-  router.post('/providers/:id/test', providers.test);
+  router.post('/providers/:id/test', requireRole('admin'), providers.test);
   router.get('/exports/:batchId', exportHandler(service, logger));
-  router.get('/audit', listAudit);
+  router.get('/audit', requireRole('admin'), listAudit);
   return router;
 }

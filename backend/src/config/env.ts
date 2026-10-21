@@ -1,15 +1,7 @@
 import { z } from 'zod';
 
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
-
-export const PROVIDER_IDS = ['virustotal', 'abuseipdb', 'otx', 'urlhaus', 'greynoise', 'demo'] as const;
+export const PROVIDER_IDS = ['virustotal', 'abuseipdb', 'otx', 'urlhaus'] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
-
-const booleanString = (fallback: 'true' | 'false') =>
-  z
-    .enum(['true', 'false', '1', '0'])
-    .default(fallback)
-    .transform((v) => v === 'true' || v === '1');
 
 const optionalSecret = z
   .string()
@@ -23,17 +15,35 @@ const envSchema = z.object({
   HOST: z.string().min(1).default('127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
-  /** There is no authentication yet, so binding beyond loopback must be an explicit choice. */
-  ALLOW_UNAUTHENTICATED_REMOTE: booleanString('false'),
+  /** Number of reverse proxies in front of the app (e.g. 2 for Vercel -> Render). 0 when exposed directly. */
+  TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
+  /** Comma-separated origins allowed to make state-changing requests. Empty: same host only. */
+  ALLOWED_ORIGINS: z.string().default(''),
+
+  SESSION_TTL_HOURS: z.coerce
+    .number()
+    .positive()
+    .max(24 * 30)
+    .default(12),
+  /** Send the session cookie over HTTPS only. Defaults to true in production. */
+  COOKIE_SECURE: z.enum(['true', 'false', '1', '0']).optional(),
+  /** Bootstrap: creates this admin account on startup when no users exist yet. */
+  ADMIN_EMAIL: z.string().email().optional(),
+  ADMIN_PASSWORD: z.string().optional(),
+  ADMIN_NAME: z.string().max(80).default('Administrator'),
 
   MAX_BATCH_SIZE: z.coerce.number().int().positive().default(500),
   MAX_INPUT_LINES: z.coerce.number().int().positive().default(20_000),
-  MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(2 * 1024 * 1024),
+  MAX_UPLOAD_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(2 * 1024 * 1024),
   API_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
 
   MONGODB_URI: z.string().default('mongodb://127.0.0.1:27017/threat_intel_hub'),
-  /** Start a local MongoDB (persisted under backend/.data) when MONGODB_URI is unreachable. */
-  MONGODB_EMBEDDED_FALLBACK: booleanString('true'),
+  /** Start a local MongoDB (persisted under backend/.data) when MONGODB_URI is unreachable. Development only by default. */
+  MONGODB_EMBEDDED_FALLBACK: z.enum(['true', 'false', '1', '0']).optional(),
   EMBEDDED_MONGODB_DIR: z.string().default('.data/mongodb'),
   REDIS_URL: z.string().default('redis://127.0.0.1:6379'),
   /** auto: BullMQ when Redis answers, otherwise the in-process development queue. */
@@ -53,7 +63,6 @@ const envSchema = z.object({
   ABUSEIPDB_API_KEY: optionalSecret,
   OTX_API_KEY: optionalSecret,
   URLHAUS_AUTH_KEY: optionalSecret,
-  GREYNOISE_API_KEY: optionalSecret,
 
   VIRUSTOTAL_REQUESTS_PER_MINUTE: optionalPositiveInt,
   VIRUSTOTAL_DAILY_LIMIT: optionalPositiveInt,
@@ -63,8 +72,6 @@ const envSchema = z.object({
   OTX_DAILY_LIMIT: optionalPositiveInt,
   URLHAUS_REQUESTS_PER_MINUTE: optionalPositiveInt,
   URLHAUS_DAILY_LIMIT: optionalPositiveInt,
-  GREYNOISE_REQUESTS_PER_MINUTE: optionalPositiveInt,
-  GREYNOISE_DAILY_LIMIT: optionalPositiveInt,
 });
 
 export interface ProviderSettings {
@@ -79,7 +86,13 @@ export type AppConfig = {
   host: string;
   port: number;
   logLevel: z.infer<typeof envSchema>['LOG_LEVEL'];
-  allowUnauthenticatedRemote: boolean;
+  trustProxy: number;
+  allowedOrigins: string[];
+  auth: {
+    sessionTtlMs: number;
+    cookieSecure: boolean;
+    bootstrapAdmin: { email: string; password: string; name: string } | null;
+  };
   limits: {
     maxBatchSize: number;
     maxInputLines: number;
@@ -96,7 +109,7 @@ export type AppConfig = {
     riskRulesPath?: string;
   };
   retention: { days: number; auditDays: number };
-  providers: Record<Exclude<ProviderId, 'demo'>, ProviderSettings>;
+  providers: Record<ProviderId, ProviderSettings>;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -107,11 +120,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   const e = parsed.data;
 
-  if (!LOOPBACK_HOSTS.has(e.HOST) && !e.ALLOW_UNAUTHENTICATED_REMOTE) {
-    throw new Error(
-      `HOST=${e.HOST} would expose the API beyond localhost, but authentication is not implemented yet. ` +
-        'Use HOST=127.0.0.1, or set ALLOW_UNAUTHENTICATED_REMOTE=true if you accept the risk.',
-    );
+  if ((e.ADMIN_EMAIL && !e.ADMIN_PASSWORD) || (!e.ADMIN_EMAIL && e.ADMIN_PASSWORD)) {
+    throw new Error('Set both ADMIN_EMAIL and ADMIN_PASSWORD (or neither)');
+  }
+  if (e.ADMIN_PASSWORD && e.ADMIN_PASSWORD.length < 12) {
+    throw new Error('ADMIN_PASSWORD must be at least 12 characters');
   }
 
   const disabled = new Set(
@@ -131,14 +144,29 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     host: e.HOST,
     port: e.PORT,
     logLevel: e.LOG_LEVEL,
-    allowUnauthenticatedRemote: e.ALLOW_UNAUTHENTICATED_REMOTE,
+    trustProxy: e.TRUST_PROXY,
+    allowedOrigins: e.ALLOWED_ORIGINS.split(',')
+      .map((o) => o.trim().replace(/\/$/, ''))
+      .filter(Boolean),
+    auth: {
+      sessionTtlMs: e.SESSION_TTL_HOURS * 3_600_000,
+      cookieSecure: e.COOKIE_SECURE ? e.COOKIE_SECURE === 'true' || e.COOKIE_SECURE === '1' : e.NODE_ENV === 'production',
+      bootstrapAdmin:
+        e.ADMIN_EMAIL && e.ADMIN_PASSWORD ? { email: e.ADMIN_EMAIL.toLowerCase(), password: e.ADMIN_PASSWORD, name: e.ADMIN_NAME } : null,
+    },
     limits: {
       maxBatchSize: e.MAX_BATCH_SIZE,
       maxInputLines: e.MAX_INPUT_LINES,
       maxUploadBytes: e.MAX_UPLOAD_BYTES,
       apiRateLimitPerMinute: e.API_RATE_LIMIT_PER_MINUTE,
     },
-    database: { uri: e.MONGODB_URI, embeddedFallback: e.MONGODB_EMBEDDED_FALLBACK, embeddedDir: e.EMBEDDED_MONGODB_DIR },
+    database: {
+      uri: e.MONGODB_URI,
+      embeddedFallback: e.MONGODB_EMBEDDED_FALLBACK
+        ? e.MONGODB_EMBEDDED_FALLBACK === 'true' || e.MONGODB_EMBEDDED_FALLBACK === '1'
+        : e.NODE_ENV !== 'production',
+      embeddedDir: e.EMBEDDED_MONGODB_DIR,
+    },
     queue: { mode: e.QUEUE_MODE, redisUrl: e.REDIS_URL },
     enrichment: {
       cacheTtlMs: e.CACHE_TTL_HOURS * 3_600_000,
@@ -153,7 +181,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       abuseipdb: provider('abuseipdb', e.ABUSEIPDB_API_KEY, e.ABUSEIPDB_REQUESTS_PER_MINUTE, e.ABUSEIPDB_DAILY_LIMIT),
       otx: provider('otx', e.OTX_API_KEY, e.OTX_REQUESTS_PER_MINUTE, e.OTX_DAILY_LIMIT),
       urlhaus: provider('urlhaus', e.URLHAUS_AUTH_KEY, e.URLHAUS_REQUESTS_PER_MINUTE, e.URLHAUS_DAILY_LIMIT),
-      greynoise: provider('greynoise', e.GREYNOISE_API_KEY, e.GREYNOISE_REQUESTS_PER_MINUTE, e.GREYNOISE_DAILY_LIMIT),
     },
   };
 }

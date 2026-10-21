@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { BatchStatusBadge, DemoBadge, Empty, ErrorBanner, Panel, ProgressBar, Spinner } from '../components/ui';
+import { BatchStatusBadge, Empty, ErrorBanner, Panel, ProgressBar, Spinner } from '../components/ui';
 import { api, type AuditEntry, type Batch, type Health } from '../lib/api';
+import { useUser } from '../lib/auth';
 import { dateTime, relativeTime, shortId } from '../lib/format';
 import { Link, navigate } from '../lib/router';
 
@@ -15,9 +16,18 @@ const ACTION_LABELS: Record<string, string> = {
   'history.delete_all': 'All history deleted',
   'retention.purge': 'Retention purge',
   'provider.test': 'Provider key tested',
+  'auth.login': 'Signed in',
+  'auth.login_failed': 'Failed sign-in',
+  'auth.logout': 'Signed out',
+  'auth.password_change': 'Password changed',
+  'user.create': 'Team member added',
+  'user.update': 'Team member updated',
 };
 
 export function BatchesPage() {
+  const user = useUser();
+  const isAdmin = user.role === 'admin';
+  const [mine, setMine] = useState(false);
   const [batches, setBatches] = useState<Batch[] | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -27,7 +37,11 @@ export function BatchesPage() {
 
   const load = useCallback(async () => {
     try {
-      const [list, events, h] = await Promise.all([api.listBatches(page, PAGE_SIZE), api.audit(40), api.getHealth()]);
+      const [list, events, h] = await Promise.all([
+        api.listBatches(page, PAGE_SIZE, mine),
+        isAdmin ? api.audit(40) : Promise.resolve([]),
+        api.getHealth(),
+      ]);
       setBatches(list.data);
       setTotal(list.meta.total);
       setAudit(events);
@@ -36,7 +50,7 @@ export function BatchesPage() {
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [page]);
+  }, [page, mine, isAdmin]);
 
   useEffect(() => {
     void load();
@@ -59,7 +73,7 @@ export function BatchesPage() {
   const settings = health?.enrichment?.settings;
 
   return (
-    <main className="mx-auto grid max-w-[1400px] gap-3 px-4 py-4 lg:grid-cols-[1fr_340px]">
+    <main className={`mx-auto grid max-w-[1400px] gap-3 px-4 py-4 ${isAdmin ? 'lg:grid-cols-[1fr_340px]' : ''}`}>
       <div className="space-y-3">
         <div className="flex items-baseline justify-between">
           <h1 className="text-base font-semibold">Batch history</h1>
@@ -73,9 +87,37 @@ export function BatchesPage() {
         <Panel
           title={`${total} batch${total === 1 ? '' : 'es'}`}
           actions={
-            <button type="button" className="btn-danger" onClick={deleteAll} disabled={!total}>
-              Delete all history
-            </button>
+            <>
+              <div
+                role="radiogroup"
+                aria-label="Whose batches"
+                className="inline-flex rounded border border-slate-200 p-0.5 dark:border-slate-700"
+              >
+                {[
+                  [false, 'Team'],
+                  [true, 'Mine'],
+                ].map(([value, label]) => (
+                  <button
+                    key={label as string}
+                    type="button"
+                    role="radio"
+                    aria-checked={mine === value}
+                    onClick={() => {
+                      setMine(value as boolean);
+                      setPage(1);
+                    }}
+                    className={`rounded px-2 py-0.5 text-xs ${mine === value ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900' : 'text-slate-600 dark:text-slate-300'}`}
+                  >
+                    {label as string}
+                  </button>
+                ))}
+              </div>
+              {isAdmin && (
+                <button type="button" className="btn-danger" onClick={deleteAll} disabled={!total}>
+                  Delete all history
+                </button>
+              )}
+            </>
           }
         >
           {batches === null ? (
@@ -84,14 +126,18 @@ export function BatchesPage() {
             </Empty>
           ) : batches.length === 0 ? (
             <Empty>
-              No batches yet. <Link to="/" className="underline">Start an investigation</Link>.
+              {mine ? 'You have not started any batches yet.' : 'No batches yet.'}{' '}
+              <Link to="/" className="underline">
+                Start an investigation
+              </Link>
+              .
             </Empty>
           ) : (
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500 dark:bg-slate-900/60 dark:text-slate-400">
                 <tr>
                   <th className="px-3 py-1.5 font-medium">Batch</th>
-                  <th className="px-3 py-1.5 font-medium">Created</th>
+                  <th className="px-3 py-1.5 font-medium">Started</th>
                   <th className="px-3 py-1.5 font-medium">Status</th>
                   <th className="px-3 py-1.5 font-medium">Indicators</th>
                   <th className="w-56 px-3 py-1.5 font-medium">Lookups</th>
@@ -99,18 +145,28 @@ export function BatchesPage() {
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {batches.map((b) => (
-                  <tr key={b.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40" onClick={() => navigate(`/batches/${b.id}`)}>
+                  <tr
+                    key={b.id}
+                    className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                    onClick={() => navigate(`/batches/${b.id}`)}
+                  >
                     <td className="px-3 py-1.5">
                       <Link to={`/batches/${b.id}`} className="font-medium hover:underline">
                         {b.label || `Batch ${shortId(b.id)}`}
-                      </Link>{' '}
-                      {b.demo && <DemoBadge />}
+                      </Link>
                       <div className="text-[11px] text-slate-500">
-                        {b.source.kind === 'file' ? b.source.name : 'pasted text'} · {b.providers.filter((p) => p.state === 'ready').map((p) => p.name).join(', ')}
+                        {b.source.kind === 'file' ? b.source.name : 'pasted text'} ·{' '}
+                        {b.providers
+                          .filter((p) => p.state === 'ready')
+                          .map((p) => p.name)
+                          .join(', ')}
                       </div>
                     </td>
                     <td className="px-3 py-1.5 whitespace-nowrap" title={dateTime(b.createdAt)}>
                       {relativeTime(b.createdAt)}
+                      <div className="text-[11px] text-slate-500">
+                        by {b.createdBy?.id === user.id ? 'you' : (b.createdBy?.name ?? 'unknown')}
+                      </div>
                     </td>
                     <td className="px-3 py-1.5">
                       <BatchStatusBadge status={b.status} />
@@ -143,31 +199,35 @@ export function BatchesPage() {
         </Panel>
       </div>
 
-      <Panel title="Audit log" className="self-start">
-        {audit.length === 0 ? (
-          <Empty>No activity yet.</Empty>
-        ) : (
-          <ul className="max-h-[70vh] divide-y divide-slate-100 overflow-y-auto text-xs dark:divide-slate-800">
-            {audit.map((e, i) => (
-              <li key={`${e.at}-${i}`} className="px-3 py-1.5">
-                <div className="flex justify-between gap-2">
-                  <span className="font-medium">{ACTION_LABELS[e.action] ?? e.action}</span>
-                  <span className="text-slate-500" title={dateTime(e.at)}>
-                    {relativeTime(e.at)}
-                  </span>
-                </div>
-                <div className="text-[11px] text-slate-500">
-                  {e.batchId && <span className="font-mono">{shortId(e.batchId)} </span>}
-                  {e.details &&
-                    Object.entries(e.details)
-                      .map(([k, v]) => `${k}: ${v}`)
-                      .join(' · ')}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
+      {isAdmin && (
+        <Panel title="Audit log" className="self-start">
+          {audit.length === 0 ? (
+            <Empty>No activity yet.</Empty>
+          ) : (
+            <ul className="max-h-[70vh] divide-y divide-slate-100 overflow-y-auto text-xs dark:divide-slate-800">
+              {audit.map((e, i) => (
+                <li key={`${e.at}-${i}`} className="px-3 py-1.5">
+                  <div className="flex justify-between gap-2">
+                    <span className="font-medium">{ACTION_LABELS[e.action] ?? e.action}</span>
+                    <span className="text-slate-500" title={dateTime(e.at)}>
+                      {relativeTime(e.at)}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    <span className="text-slate-700 dark:text-slate-300">{e.actor?.name ?? 'System'}</span>
+                    {e.batchId && <span className="font-mono"> · {shortId(e.batchId)}</span>}
+                    {e.details && ' · '}
+                    {e.details &&
+                      Object.entries(e.details)
+                        .map(([k, v]) => `${k}: ${v}`)
+                        .join(' · ')}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      )}
     </main>
   );
 }

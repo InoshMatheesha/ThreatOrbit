@@ -29,7 +29,7 @@ export function providerHandlers(service: EnrichmentService) {
       throw new ApiError(429, 'RATE_LIMITED', `Wait ${Math.ceil((TEST_COOLDOWN_MS - since) / 1000)}s before testing this provider again`);
     }
     lastTest.set(id, Date.now());
-    res.json({ data: await service.testProvider(id, req.sessionId) });
+    res.json({ data: await service.testProvider(id, req.user!) });
   };
 
   return { list, test };

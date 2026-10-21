@@ -230,7 +230,10 @@ describe('parseIndicators (line mode)', () => {
     expect(evil.lines).toEqual([1, 3, 5]);
     expect(evil.originals).toEqual(['Evil.com', 'evil.com.', 'EVIL[.]COM']);
     const dupes = r.entries.filter((e) => e.duplicate);
-    expect(dupes.map((d) => [d.line, d.duplicateOfLine])).toEqual([[3, 1], [5, 1]]);
+    expect(dupes.map((d) => [d.line, d.duplicateOfLine])).toEqual([
+      [3, 1],
+      [5, 1],
+    ]);
   });
 
   it('never merges different indicator types', () => {
@@ -241,7 +244,16 @@ describe('parseIndicators (line mode)', () => {
 
   it('counts valid, invalid, duplicate and per-type totals', () => {
     const r = parseIndicators(
-      ['8.8.8.8', '8.8.8.8', 'not an ioc', '2606:4700::1111', 'd41d8cd98f00b204e9800998ecf8427e', 'evil.com', 'http://evil.com/', '999.1.1.1'].join('\n'),
+      [
+        '8.8.8.8',
+        '8.8.8.8',
+        'not an ioc',
+        '2606:4700::1111',
+        'd41d8cd98f00b204e9800998ecf8427e',
+        'evil.com',
+        'http://evil.com/',
+        '999.1.1.1',
+      ].join('\n'),
     );
     expect(r.stats).toMatchObject({ total: 8, valid: 6, invalid: 2, duplicates: 1, unique: 5, eligible: 5 });
     expect(r.stats.byType).toEqual({ ipv4: 1, ipv6: 1, md5: 1, sha1: 0, sha256: 0, domain: 1, url: 1 });

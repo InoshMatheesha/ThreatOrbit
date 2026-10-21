@@ -1,7 +1,6 @@
 import { useRef, useState, type DragEvent } from 'react';
 import type { ParseMode } from '../../lib/api';
 import type { PreviewInput } from './usePreview';
-import { SAMPLE_INPUT } from './sample';
 
 const ACCEPTED = ['.txt', '.csv'];
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -50,7 +49,11 @@ export function BulkInput({ input, mode, onInputChange, onModeChange }: Props) {
   return (
     <section className="rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
-        <div role="radiogroup" aria-label="Parsing mode" className="inline-flex rounded border border-slate-200 p-0.5 dark:border-slate-700">
+        <div
+          role="radiogroup"
+          aria-label="Parsing mode"
+          className="inline-flex rounded border border-slate-200 p-0.5 dark:border-slate-700"
+        >
           {MODES.map((m) => (
             <button
               key={m.value}
@@ -72,16 +75,6 @@ export function BulkInput({ input, mode, onInputChange, onModeChange }: Props) {
         <div className="flex items-center gap-1.5">
           <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
             Upload .txt / .csv
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              setFileError(null);
-              onInputChange({ kind: 'text', text: SAMPLE_INPUT });
-            }}
-          >
-            Load sample
           </button>
           <button
             type="button"
@@ -118,7 +111,9 @@ export function BulkInput({ input, mode, onInputChange, onModeChange }: Props) {
         {input.kind === 'file' ? (
           <div className="flex h-56 flex-col items-center justify-center gap-2 text-sm">
             <div className="font-mono text-slate-700 dark:text-slate-200">{input.file.name}</div>
-            <div className="text-xs text-slate-500">{(input.file.size / 1024).toFixed(1)} KB · parsed on the server, nothing sent to providers</div>
+            <div className="text-xs text-slate-500">
+              {(input.file.size / 1024).toFixed(1)} KB · parsed on the server, nothing sent to providers
+            </div>
             <button type="button" className="btn mt-1" onClick={() => onInputChange({ kind: 'text', text: '' })}>
               Remove file
             </button>

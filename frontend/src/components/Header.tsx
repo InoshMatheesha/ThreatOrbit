@@ -1,24 +1,27 @@
+import { useUser } from '../lib/auth';
 import { Link, usePath } from '../lib/router';
 import { ApiStatus } from './ApiStatus';
-
-const NAV = [
-  { to: '/', label: 'Investigate', match: (p: string) => p === '/' },
-  { to: '/batches', label: 'Batches', match: (p: string) => p.startsWith('/batches') },
-  { to: '/providers', label: 'Providers', match: (p: string) => p.startsWith('/providers') },
-];
+import { UserMenu } from './UserMenu';
 
 export function Header() {
   const path = usePath();
+  const user = useUser();
+  const nav = [
+    { to: '/', label: 'Investigate', match: (p: string) => p === '/' },
+    { to: '/batches', label: 'Batches', match: (p: string) => p.startsWith('/batches') },
+    { to: '/providers', label: 'Providers', match: (p: string) => p.startsWith('/providers') },
+    ...(user.role === 'admin' ? [{ to: '/users', label: 'Team', match: (p: string) => p.startsWith('/users') }] : []),
+  ];
   return (
     <header className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-      <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4 px-4 py-2">
+      <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4 px-4 py-1.5">
         <div className="flex items-center gap-5">
           <Link to="/" className="flex items-center gap-2">
             <img src="/favicon.svg" alt="" className="h-5 w-5" />
             <span className="text-sm font-semibold tracking-tight">Threat Intel Hub</span>
           </Link>
           <nav className="flex gap-1">
-            {NAV.map((n) => (
+            {nav.map((n) => (
               <Link
                 key={n.to}
                 to={n.to}
@@ -33,9 +36,9 @@ export function Header() {
             ))}
           </nav>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="hidden text-xs text-slate-500 md:inline dark:text-slate-400">Local only · no auth</span>
+        <div className="flex items-center gap-3">
           <ApiStatus />
+          <UserMenu />
         </div>
       </div>
     </header>

@@ -3,6 +3,7 @@ import { ApiError } from '../lib/errors.js';
 import { AuditEvent, Batch, EnrichmentResult } from '../models/index.js';
 import { parseIndicators } from '../parser/index.js';
 import { ProviderError } from '../providers/types.js';
+import type { Principal } from '../services/authService.js';
 import { buildItemViews } from '../services/resultViews.js';
 import { DEFAULT_RISK_RULES } from '../config/riskRules.js';
 import { useTestDatabase } from './db.js';
@@ -10,7 +11,10 @@ import { enrichmentHarness, fakeAdapter, finding, waitFor } from './helpers.js';
 
 useTestDatabase();
 
-const opts = { sessionId: 'test-session', demo: false, source: { kind: 'text' as const } };
+const ANALYST: Principal = { id: 'user-analyst', email: 'analyst@example.com', name: 'Ana Analyst', role: 'analyst' };
+const OTHER_ANALYST: Principal = { id: 'user-other', email: 'other@example.com', name: 'Otto Other', role: 'analyst' };
+const ADMIN: Principal = { id: 'user-admin', email: 'admin@example.com', name: 'Ada Admin', role: 'admin' };
+const opts = { actor: ANALYST, source: { kind: 'text' as const } };
 
 async function run(h: Awaited<ReturnType<typeof enrichmentHarness>>, text: string, extra: Partial<typeof opts> = {}) {
   const batch = await h.service.createBatch(parseIndicators(text), { ...opts, ...extra });
@@ -186,15 +190,20 @@ describe('batch processing', () => {
   it('cancels queued work, lets in-flight lookups finish, then reports cancelled', async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    const vt = fakeAdapter('virustotal', ['ipv4'], async () => {
-      await gate;
-      return finding();
-    }, { concurrency: 1 });
+    const vt = fakeAdapter(
+      'virustotal',
+      ['ipv4'],
+      async () => {
+        await gate;
+        return finding();
+      },
+      { concurrency: 1 },
+    );
     const h = await enrichmentHarness([vt]);
     const created = await h.service.createBatch(parseIndicators('1.1.1.1\n8.8.8.8\n9.9.9.9'), opts);
     await waitFor(async () => (await EnrichmentResult.countDocuments({ status: 'running' })) === 1);
 
-    await h.service.cancelBatch(created._id, 'test-session');
+    await h.service.cancelBatch(created._id, ANALYST);
     expect((await Batch.findById(created._id).lean())!.status).toBe('cancelling');
     release();
     await h.queue.idle();
@@ -203,7 +212,7 @@ describe('batch processing', () => {
     expect(batch.status).toBe('cancelled');
     expect(batch.counters).toMatchObject({ completed: 1, cancelled: 2 });
     expect(vt.calls).toHaveLength(1);
-    await expect(h.service.cancelBatch(created._id, 'test-session')).rejects.toThrow(/already cancelled/);
+    await expect(h.service.cancelBatch(created._id, ANALYST)).rejects.toThrow(/already cancelled/);
     await h.service.stop();
   });
 
@@ -219,12 +228,12 @@ describe('batch processing', () => {
 
     const failed = (await EnrichmentResult.findOne({ status: 'failed' }).lean())!;
     fail = false;
-    await h.service.retryResult(String(failed._id), 'test-session');
+    await h.service.retryResult(String(failed._id), ANALYST);
     await h.queue.idle();
     expect(await EnrichmentResult.findById(failed._id).lean()).toMatchObject({ status: 'completed', summary: 'after retry' });
     expect((await Batch.findById(batch._id).lean())!.status).toBe('completed');
 
-    const err = await apiErrorOf(h.service.retryResult(String(failed._id), 'test-session'));
+    const err = await apiErrorOf(h.service.retryResult(String(failed._id), ANALYST));
     expect(err.code).toBe('NOT_RETRYABLE');
     await h.service.stop();
   });
@@ -256,15 +265,26 @@ describe('batch processing', () => {
     await some.service.stop();
   });
 
-  it('runs demo batches only against the clearly labeled synthetic provider', async () => {
-    const vt = fakeAdapter('virustotal', ['ipv4'], async () => finding());
+  it('lets only the owner or an admin change a batch, and records who did what', async () => {
+    const vt = fakeAdapter('virustotal', ['ipv4'], async () => {
+      throw new ProviderError('auth', 'bad key');
+    });
     const h = await enrichmentHarness([vt]);
-    const batch = await run(h, '8.8.8.8\nexample.com', { demo: true });
-    expect(batch.demo).toBe(true);
-    expect(batch.providers.map((p) => p.id)).toEqual(['demo']);
-    expect(vt.calls).toHaveLength(0);
-    const results = await EnrichmentResult.find({ batchId: batch._id }).lean();
-    expect(results.every((r) => r.synthetic && r.summary?.startsWith('[SYNTHETIC]'))).toBe(true);
+    const batch = await run(h, '8.8.8.8');
+    expect(batch.createdBy).toEqual({ id: ANALYST.id, email: ANALYST.email, name: ANALYST.name });
+
+    expect((await apiErrorOf(h.service.retryFailed(batch._id, OTHER_ANALYST))).code).toBe('FORBIDDEN');
+    expect((await apiErrorOf(h.service.deleteBatch(batch._id, OTHER_ANALYST))).code).toBe('FORBIDDEN');
+    await h.service.retryFailed(batch._id, ADMIN);
+    await h.queue.idle();
+    await h.service.deleteBatch(batch._id, ANALYST);
+
+    const events = await AuditEvent.find().sort({ at: 1 }).lean();
+    expect(events.map((e) => [e.action, e.actor?.email])).toEqual([
+      ['batch.create', ANALYST.email],
+      ['batch.retry_failed', ADMIN.email],
+      ['batch.delete', ANALYST.email],
+    ]);
     await h.service.stop();
   });
 
@@ -306,7 +326,7 @@ describe('batch processing', () => {
     const vt = fakeAdapter('virustotal', ['ipv4'], async () => finding());
     const h = await enrichmentHarness([vt]);
     const batch = await run(h, '203.0.113.77\n8.8.8.8');
-    await h.service.deleteBatch(batch._id, 'test-session');
+    await h.service.deleteBatch(batch._id, ANALYST);
     const events = await AuditEvent.find().sort({ at: 1 }).lean();
     expect(events.map((e) => e.action)).toEqual(['batch.create', 'batch.delete']);
     expect(JSON.stringify(events)).not.toContain('8.8.8.8');

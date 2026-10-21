@@ -9,10 +9,10 @@ import type { IndicatorType } from '../parser/types.js';
 import { assessRisk } from '../services/riskEngine.js';
 
 const PROVIDERS: ProviderSnapshot[] = [
-  { id: 'virustotal', name: 'VirusTotal', state: 'ready', supports: ['ipv4', 'domain', 'url', 'sha256'], synthetic: false, requestsPerMinute: 4 },
-  { id: 'abuseipdb', name: 'AbuseIPDB', state: 'ready', supports: ['ipv4'], synthetic: false, requestsPerMinute: 30 },
-  { id: 'otx', name: 'AlienVault OTX', state: 'ready', supports: ['ipv4', 'domain', 'url', 'sha256'], synthetic: false, requestsPerMinute: 30 },
-  { id: 'urlhaus', name: 'URLhaus', state: 'ready', supports: ['url', 'domain', 'ipv4'], synthetic: false, requestsPerMinute: 30 },
+  { id: 'virustotal', name: 'VirusTotal', state: 'ready', supports: ['ipv4', 'domain', 'url', 'sha256'], requestsPerMinute: 4 },
+  { id: 'abuseipdb', name: 'AbuseIPDB', state: 'ready', supports: ['ipv4'], requestsPerMinute: 30 },
+  { id: 'otx', name: 'AlienVault OTX', state: 'ready', supports: ['ipv4', 'domain', 'url', 'sha256'], requestsPerMinute: 30 },
+  { id: 'urlhaus', name: 'URLhaus', state: 'ready', supports: ['url', 'domain', 'ipv4'], requestsPerMinute: 30 },
 ];
 
 type R = Parameters<typeof assessRisk>[1][number];
@@ -23,7 +23,6 @@ const vt = (malicious: number, type: IndicatorType = 'ipv4'): R => ({
   outcome: 'found',
   verdict: malicious >= 3 ? 'malicious' : malicious > 0 ? 'suspicious' : 'no_detections',
   detections: { malicious, suspicious: 0, harmless: 60, undetected: 30 - malicious, total: 90 },
-  synthetic: false,
 });
 const abuse = (score: number, reports = score ? 10 : 0): R => ({
   provider: 'abuseipdb',
@@ -33,16 +32,21 @@ const abuse = (score: number, reports = score ? 10 : 0): R => ({
   verdict: score >= 75 ? 'malicious' : score >= 25 ? 'suspicious' : 'no_detections',
   abuseConfidence: score,
   metrics: { totalReports: reports },
-  synthetic: false,
 });
 const failed = (provider: EnrichmentResultDoc['provider'], kind = 'timeout'): R =>
-  ({ provider, type: 'ipv4', status: 'failed', synthetic: false, error: { kind, message: 'x', at: new Date() } }) as R;
-const notFound = (provider: EnrichmentResultDoc['provider']): R => ({ provider, type: 'ipv4', status: 'completed', outcome: 'not_found', verdict: 'unknown', synthetic: false });
-const pending = (provider: EnrichmentResultDoc['provider']): R => ({ provider, type: 'ipv4', status: 'queued', synthetic: false });
+  ({ provider, type: 'ipv4', status: 'failed', error: { kind, message: 'x', at: new Date() } }) as R;
+const notFound = (provider: EnrichmentResultDoc['provider']): R => ({
+  provider,
+  type: 'ipv4',
+  status: 'completed',
+  outcome: 'not_found',
+  verdict: 'unknown',
+});
+const pending = (provider: EnrichmentResultDoc['provider']): R => ({ provider, type: 'ipv4', status: 'queued' });
 
 const ip = { type: 'ipv4' as const, lookupEligible: true };
-const assess = (results: R[], item: { type: IndicatorType; lookupEligible: boolean } = ip, demo = false) =>
-  assessRisk(item, results, PROVIDERS, DEFAULT_RISK_RULES, demo);
+const assess = (results: R[], item: { type: IndicatorType; lookupEligible: boolean } = ip) =>
+  assessRisk(item, results, PROVIDERS, DEFAULT_RISK_RULES);
 
 describe('risk engine', () => {
   it('takes the strongest signal and explains it', () => {
@@ -78,7 +82,14 @@ describe('risk engine', () => {
   });
 
   it('caps OTX pulses below High no matter how many', () => {
-    const otx = (pulses: number): R => ({ provider: 'otx', type: 'ipv4', status: 'completed', outcome: 'found', verdict: 'suspicious', metrics: { pulses }, synthetic: false });
+    const otx = (pulses: number): R => ({
+      provider: 'otx',
+      type: 'ipv4',
+      status: 'completed',
+      outcome: 'found',
+      verdict: 'suspicious',
+      metrics: { pulses },
+    });
     expect(assess([otx(500)]).level).toBe('medium');
     expect(assess([otx(2)]).level).toBe('low');
   });
@@ -97,18 +108,12 @@ describe('risk engine', () => {
     expect(assess([], { type: 'md5', lookupEligible: true }).reasons[0]).toBe('No configured provider supports md5 indicators');
   });
 
-  it('ignores synthetic results outside demo batches', () => {
-    const demo: R = { provider: 'demo', type: 'ipv4', status: 'completed', outcome: 'found', verdict: 'malicious', detections: { malicious: 40, suspicious: 0, harmless: 0, undetected: 50, total: 90 }, synthetic: true };
-    expect(assess([demo]).level).toBe('unknown');
-    expect(assessRisk(ip, [demo], [{ ...PROVIDERS[0]!, id: 'demo', name: 'Demo' }], DEFAULT_RISK_RULES, true).level).toBe('high');
-  });
-
   it('loads rule overrides from a JSON file', () => {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rules-')), 'rules.json');
     fs.writeFileSync(file, JSON.stringify({ abuseipdb: { high: 95 }, bogus: { x: 1 } }));
     const rules = loadRiskRules(file);
     expect(rules.abuseipdb).toEqual({ high: 95, medium: 25, low: 1 });
     expect(rules.virustotal).toEqual(DEFAULT_RISK_RULES.virustotal);
-    expect(assessRisk(ip, [abuse(90)], PROVIDERS, rules, false).level).toBe('medium');
+    expect(assessRisk(ip, [abuse(90)], PROVIDERS, rules).level).toBe('medium');
   });
 });

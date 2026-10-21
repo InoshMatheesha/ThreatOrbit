@@ -7,7 +7,12 @@ import { MemoryLookupQueue } from '../queue/memoryQueue.js';
 import type { LookupJob, ProcessOutcome } from '../queue/types.js';
 import { silentLogger, waitFor } from './helpers.js';
 
-const job = (n: number, provider: ProviderId = 'virustotal', batchId = 'b1'): LookupJob => ({ resultId: `r${n}`, batchId, provider, attempt: 1 });
+const job = (n: number, provider: ProviderId = 'virustotal', batchId = 'b1'): LookupJob => ({
+  resultId: `r${n}`,
+  batchId,
+  provider,
+  attempt: 1,
+});
 const limits = (l: Partial<ProviderLimits>, provider: ProviderId = 'virustotal') =>
   new Map<ProviderId, ProviderLimits>([[provider, { requestsPerMinute: 100, dailyLimit: null, concurrency: 4, ...l }]]);
 
@@ -18,10 +23,13 @@ describe('in-memory development queue', () => {
     vi.useFakeTimers();
     const seen: string[] = [];
     const q = new MemoryLookupQueue();
-    await q.start(async (j) => {
-      seen.push(j.resultId);
-      return { kind: 'done' };
-    }, limits({ requestsPerMinute: 2 }));
+    await q.start(
+      async (j) => {
+        seen.push(j.resultId);
+        return { kind: 'done' };
+      },
+      limits({ requestsPerMinute: 2 }),
+    );
     await q.enqueue([job(1), job(2), job(3)]);
     await vi.advanceTimersByTimeAsync(59_000);
     expect(seen).toEqual(['r1', 'r2']);
@@ -61,11 +69,14 @@ describe('in-memory development queue', () => {
     vi.useFakeTimers();
     const seen: string[] = [];
     const q = new MemoryLookupQueue();
-    await q.start(async (j): Promise<ProcessOutcome> => {
-      seen.push(`${j.resultId}#${j.attempt}`);
-      if (j.resultId === 'r1' && j.attempt === 1) return { kind: 'retry', delayMs: 5_000, pauseProviderMs: 5_000 };
-      return { kind: 'done' };
-    }, limits({ concurrency: 1 }));
+    await q.start(
+      async (j): Promise<ProcessOutcome> => {
+        seen.push(`${j.resultId}#${j.attempt}`);
+        if (j.resultId === 'r1' && j.attempt === 1) return { kind: 'retry', delayMs: 5_000, pauseProviderMs: 5_000 };
+        return { kind: 'done' };
+      },
+      limits({ concurrency: 1 }),
+    );
     await q.enqueue([job(1), job(2)]);
     await vi.advanceTimersByTimeAsync(100);
     expect(seen).toEqual(['r1#1']);
@@ -77,10 +88,13 @@ describe('in-memory development queue', () => {
   it('drops waiting and delayed jobs of a cancelled batch', async () => {
     const seen: string[] = [];
     const q = new MemoryLookupQueue();
-    await q.start(async (j) => {
-      seen.push(j.resultId);
-      return { kind: 'done' };
-    }, limits({ requestsPerMinute: 1 }));
+    await q.start(
+      async (j) => {
+        seen.push(j.resultId);
+        return { kind: 'done' };
+      },
+      limits({ requestsPerMinute: 1 }),
+    );
     await q.enqueue([job(1), job(2, 'virustotal', 'b2')]);
     await q.enqueue([job(3)], 50);
     await q.cancelBatch('b1');

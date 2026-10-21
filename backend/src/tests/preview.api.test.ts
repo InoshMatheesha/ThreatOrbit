@@ -54,7 +54,9 @@ describe('POST /api/batches/preview', () => {
 
   it('flags batches over the configured maximum batch size', async () => {
     const { app } = testApp({ MAX_BATCH_SIZE: '10' });
-    const res = await request(app).post('/api/batches/preview').send({ text: mixedIndicators(15) });
+    const res = await request(app)
+      .post('/api/batches/preview')
+      .send({ text: mixedIndicators(15) });
     expect(res.status).toBe(200);
     expect(res.body.data.limits).toEqual({ maxBatchSize: 10, withinBatchLimit: false, overBy: 5 });
   });
@@ -68,7 +70,9 @@ describe('POST /api/batches/preview', () => {
 
   it('rejects input over the line limit', async () => {
     const { app } = testApp({ MAX_INPUT_LINES: '5' });
-    const res = await request(app).post('/api/batches/preview').send({ text: '1.1.1.1\n'.repeat(6) });
+    const res = await request(app)
+      .post('/api/batches/preview')
+      .send({ text: '1.1.1.1\n'.repeat(6) });
     expect(res.status).toBe(413);
     expect(res.body.error).toMatchObject({ code: 'TOO_MANY_LINES', details: { lines: 6, maxLines: 5 } });
   });
@@ -96,7 +100,9 @@ describe('POST /api/batches/preview', () => {
 
     it('rejects oversized JSON bodies', async () => {
       const { app } = testApp({ MAX_UPLOAD_BYTES: '1024' });
-      const res = await request(app).post('/api/batches/preview').send({ text: 'a'.repeat(200_000) });
+      const res = await request(app)
+        .post('/api/batches/preview')
+        .send({ text: 'a'.repeat(200_000) });
       expect(res.status).toBe(413);
       expect(res.body.error.code).toBe('PAYLOAD_TOO_LARGE');
     });

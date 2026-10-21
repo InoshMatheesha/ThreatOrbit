@@ -6,6 +6,6 @@ const querySchema = z.object({ limit: z.coerce.number().int().min(1).max(500).de
 
 export const listAudit: RequestHandler = async (req, res) => {
   const { limit } = querySchema.parse(req.query);
-  const events = await AuditEvent.find({}, { _id: 0, sessionId: 0 }).sort({ at: -1 }).limit(limit).lean();
+  const events = await AuditEvent.find({}, { _id: 0 }).sort({ at: -1 }).limit(limit).lean();
   res.json({ data: events });
 };

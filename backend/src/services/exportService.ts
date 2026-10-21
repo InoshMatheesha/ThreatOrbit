@@ -3,7 +3,6 @@ import type { ItemView } from './resultViews.js';
 
 const CSV_COLUMNS = [
   'batch_id',
-  'synthetic_demo_data',
   'indicator',
   'type',
   'risk',
@@ -43,7 +42,6 @@ export function toCsv(batch: BatchDoc, items: ItemView[]): string {
   for (const item of items) {
     const base = {
       batch_id: batch._id,
-      synthetic_demo_data: batch.demo ? 'yes' : 'no',
       indicator: item.value,
       type: item.type,
       risk: item.risk.level,
@@ -86,12 +84,11 @@ export function toCsv(batch: BatchDoc, items: ItemView[]): string {
 export function toJson(batch: BatchDoc, items: ItemView[]) {
   return {
     exportedAt: new Date().toISOString(),
-    ...(batch.demo ? { notice: 'SYNTHETIC DEMO DATA: not real threat intelligence' } : {}),
     batch: {
       id: batch._id,
       label: batch.label ?? null,
       status: batch.status,
-      demo: batch.demo,
+      createdBy: batch.createdBy,
       createdAt: batch.createdAt,
       completedAt: batch.completedAt ?? null,
       totals: batch.totals,
