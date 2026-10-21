@@ -17,6 +17,8 @@ import {
 export const DEFAULT_MAX_LINES = 20_000;
 const MAX_LINE_LENGTH = 8192;
 const COMMENT_RE = /^(?:#|\/\/)/;
+/** Separators analysts use to put several indicators on one line: commas, semicolons, pipes and whitespace. */
+const LIST_SEPARATOR_RE = /[\s,;|]+/;
 
 export class InputTooLargeError extends Error {
   constructor(
@@ -52,6 +54,22 @@ function classifyCandidate(line: number, original: string): Classified {
   const outcome: ClassifyOutcome =
     original.length > MAX_LINE_LENGTH ? { ok: false, error: `Line exceeds ${MAX_LINE_LENGTH} characters` } : classifyIndicator(value);
   return { line, original, value, refanged: changed, outcome };
+}
+
+/**
+ * A line is normally one indicator. When it does not classify as a whole but holds
+ * a list (e.g. `1.2.3.4, 5.6.7.8; evil[.]com`), each item becomes its own entry with
+ * the same line number. A line that is valid as a whole, such as a URL with commas in
+ * its query string, is never split, and neither is a line where no item is valid.
+ */
+function classifyLine(line: number, text: string): Classified[] {
+  const whole = classifyCandidate(line, text);
+  if (whole.outcome.ok || text.length > MAX_LINE_LENGTH || !LIST_SEPARATOR_RE.test(text)) return [whole];
+  const parts = text.split(LIST_SEPARATOR_RE).filter(Boolean);
+  if (parts.length < 2) return [whole];
+  const items = parts.map((part) => classifyCandidate(line, part));
+  // Plain prose ("not an ioc") stays one invalid line instead of one error per word.
+  return items.some((item) => item.outcome.ok) ? items : [whole];
 }
 
 /**
@@ -94,7 +112,7 @@ export function parseIndicators(text: string, options: ParseOptions = {}): Parse
       } else if (COMMENT_RE.test(trimmed)) {
         commentLines++;
       } else {
-        classified.push(classifyCandidate(i + 1, trimmed));
+        classified.push(...classifyLine(i + 1, trimmed));
       }
     });
   }

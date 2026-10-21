@@ -1,174 +1,248 @@
-# Threat Intel Hub
+<p align="center">
+  <img src="docs/assets/logo.png" alt="ThreatOrbit" width="120" />
+</p>
 
-Bulk IOC triage for SOC teams. Paste hundreds of IPs, hashes, domains and URLs, or upload a TXT/CSV file. Threat Intel Hub validates, refangs and deduplicates them, then enriches every indicator across **VirusTotal, AbuseIPDB, AlienVault OTX and URLhaus** in one batch, with an explainable risk level for each.
+<h1 align="center">ThreatOrbit</h1>
 
-## Features
+<p align="center">
+  Bulk indicator-of-compromise enrichment and triage for security operations teams.
+</p>
 
-| Area | What you get |
-|---|---|
-| **Input** | Paste text or drag-and-drop `.txt`/`.csv` files. Two modes: one indicator per line, or extraction from free text such as emails and reports. A live preview shows total, valid, invalid, duplicate and kept-local counts. |
-| **Parsing** | IPv4, IPv6, MD5, SHA-1, SHA-256, domains (including IDN/punycode) and http(s) URLs. Refangs `hxxp`, `[.]` and `(dot)`. Normalizes strictly without merging distinct indicators, and keeps source line numbers. Fully offline. |
-| **Safety** | Private/reserved IPs and internal domains are never sent to providers. Flags homograph domains, invisible characters, credentials embedded in URLs, and numeric-host tricks. Every batch requires an explicit third-party-sharing confirmation. |
-| **Providers** | Read-only lookups: nothing is ever uploaded or submitted for analysis. Each provider gets its own rate limit, concurrency, timeout, exponential-backoff retries, `Retry-After`/HTTP 429 handling and a persistent daily-quota guard. |
-| **Honest results** | A provider either has a record or it doesn't. Timeouts, auth failures, quota exhaustion and provider errors are reported as such and never counted as clean. |
-| **Risk** | High / Medium / Low / Unknown, from per-provider, per-indicator-type rules that you can configure. Every level lists its reasons. Disagreement between providers is called out explicitly. |
-| **Batches** | Queued lookups with live progress, per-provider ETAs, cancel, retry one or all failed lookups, and automatic resume after interruptions. Fresh results are cached for 24 h by default. |
-| **Dashboard** | Metrics, per-provider progress, and a results table filterable by risk, type, provider, status and disagreement, with search, sort and pagination. A detail panel shows every provider's evidence, tags, references and permalinks. |
-| **Exports** | CSV (one row per indicator × provider, protected against formula injection, Excel-friendly UTF-8) and JSON. |
-| **Team** | Accounts with **admin** and **analyst** roles. Analysts see the whole team's batches but can only change their own. Admins manage the team, view the audit log, test provider keys and can delete history. |
-| **Governance** | An audit log of who did what (sign-ins, batches, exports, retries, user changes). Data is purged automatically after 30 days by default. |
+<p align="center">
+  <a href="https://threatorbit.vercel.app"><img alt="Live" src="https://img.shields.io/badge/live-threatorbit.vercel.app-000000?style=flat-square" /></a>
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-000000?style=flat-square&logo=typescript&logoColor=white" />
+  <img alt="React" src="https://img.shields.io/badge/React-000000?style=flat-square&logo=react&logoColor=white" />
+  <img alt="Node.js" src="https://img.shields.io/badge/Node.js-000000?style=flat-square&logo=nodedotjs&logoColor=white" />
+  <img alt="MongoDB" src="https://img.shields.io/badge/MongoDB-000000?style=flat-square&logo=mongodb&logoColor=white" />
+  <img alt="Vercel" src="https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white" />
+</p>
+
+---
+
+## Overview
+
+ThreatOrbit takes a raw list of indicators (IP addresses, file hashes, domains and URLs), cleans it, and enriches every indicator against several threat intelligence providers in a single batch. Each indicator receives a risk level together with the evidence and reasoning behind it, so an analyst can triage hundreds of indicators in minutes instead of checking them one by one.
+
+Supported providers: **VirusTotal**, **AbuseIPDB**, **AlienVault OTX** and **URLhaus**.
+
+## Contents
+
+- [Capabilities](#capabilities)
+- [Architecture](#architecture)
+- [Deployment](#deployment)
+- [Local development](#local-development)
+- [Configuration](#configuration)
+- [Providers](#providers)
+- [Risk model](#risk-model)
+- [Security](#security)
+- [API reference](#api-reference)
+
+## Capabilities
+
+### Input and parsing
+
+- Paste text or upload `.txt` / `.csv` files.
+- **List mode** accepts one indicator per line or several per line separated by commas, semicolons, pipes or spaces. For example, `66.132.195.29,65.20.149.239,202.150.138.15` becomes three indicators. A line that is valid as a whole, such as a URL with commas in its query string, is kept intact.
+- **Extraction mode** pulls indicators out of free text such as emails, tickets and reports.
+- Supported types: IPv4, IPv6, MD5, SHA-1, SHA-256, domains (including internationalized domains) and HTTP(S) URLs.
+- Defanged values are restored automatically (`hxxp`, `[.]`, `(dot)` and similar).
+- Strict normalization and deduplication, with source line numbers preserved.
+- A live preview reports total, valid, invalid, duplicate and local-only counts before anything is sent to a provider.
+- Parsing runs entirely offline.
+
+### Enrichment
+
+- Read-only lookups. Nothing is uploaded or submitted for analysis.
+- Each provider has its own rate limit, concurrency, timeout, exponential back-off, `Retry-After` handling and a persistent daily quota guard.
+- Fresh results are cached (24 hours by default) and reused across batches.
+- Batches show live progress per provider and support cancel, retry of one or all failed lookups, and automatic resume after interruption.
+
+### Analysis and reporting
+
+- Risk levels of High, Medium, Low or Unknown, each with the reasons that produced it.
+- Disagreement between providers is detected and flagged.
+- Timeouts, authentication failures, exhausted quotas and provider errors are reported as such and are never treated as a clean result.
+- Results table with filtering by risk, type, provider, status and disagreement, plus search, sorting and pagination.
+- Detail panel with full evidence, tags, references and provider permalinks.
+- CSV and JSON export.
+
+### Team and governance
+
+- Accounts with **admin** and **analyst** roles.
+- Analysts see the whole team's batches and can change only their own. Admins manage users, review the audit log, test provider keys and manage history.
+- Audit log of sign-ins, batches, exports, retries and user changes.
+- Automatic data retention (30 days by default).
+
+### Safety controls
+
+- Private and reserved IP ranges and internal domains are never sent to providers.
+- Homograph domains, invisible characters, embedded URL credentials and numeric host tricks are flagged.
+- Every batch requires explicit confirmation before indicators are shared with third parties.
 
 ## Architecture
 
 ```
-Browser ──> Vercel ──┬── static React app
-                     └── /api/*  Node.js function (Express API) ──> MongoDB Atlas
-                                        │
-                                        └──> VirusTotal · AbuseIPDB · OTX · URLhaus
+Browser
+   |
+   v
+Vercel
+   |-- Static React application
+   |-- /api/*  Node.js serverless function (Express)
+                  |-- MongoDB Atlas  (data, queue, rate limits, sessions)
+                  |-- VirusTotal, AbuseIPDB, AlienVault OTX, URLhaus
 ```
 
-- **One domain:** the API runs as a Vercel serverless function on the same domain as the website.
-- **Queue in MongoDB:** Vercel has no always-on workers, so lookups wait in MongoDB and are processed in short bursts. The bursts come from the open batch page, plus an optional free scheduler.
-- **Shared limits:** rate limits, retries, back-off and daily quotas are coordinated through the database, so they hold across every function instance.
-- **Self-hosting:** the same code also runs as a normal long-running server, with BullMQ on Redis or an in-process queue (see Local development).
+- **Single origin.** The API runs as a Vercel serverless function on the same domain as the web application.
+- **Database-backed queue.** Serverless platforms have no long-running workers, so lookups are stored in MongoDB and processed in short, bounded bursts. Bursts are driven by an open batch page and, optionally, by an external scheduler.
+- **Shared throttling.** Rate limits, back-off and daily quotas are coordinated through the database and hold across all function instances.
+- **Self-hosting.** The same codebase runs as a conventional long-running server with BullMQ on Redis, or with an in-process queue.
+
+### Repository layout
 
 ```
-frontend/              React 19 + Vite + Tailwind CSS 4
+frontend/                 React 19, Vite, Tailwind CSS 4
 backend/
-  src/parser/          offline IOC parser (validation, refang, IDN, dedupe, extraction, CSV)
-  src/providers/       one adapter per provider; allowlisted, timed HTTP client; registry
-  src/queue/           database queue (serverless), BullMQ, or in-process
-  src/services/        enrichment, risk engine, auth, exports, audit, retention
-  src/models/          Batch, EnrichmentResult, Indicator, User, Session, AuditEvent, usage and throttle state
-  src/serverless.ts    Vercel function entry
-  src/server.ts        long-running server entry
-scripts/build-vercel.mjs  builds the Vercel output (static site + bundled API function)
-vercel.json            Vercel project settings
-docker-compose.yml     MongoDB + Redis for local development
+  src/parser/             Offline indicator parser (validation, refanging, IDN, deduplication, extraction, CSV)
+  src/providers/          Provider adapters, allowlisted HTTP client, registry
+  src/queue/              Database queue (serverless), BullMQ, in-process queue
+  src/services/           Enrichment, risk engine, authentication, exports, audit, retention
+  src/models/             MongoDB models
+  src/serverless.ts       Vercel function entry point
+  src/server.ts           Long-running server entry point
+scripts/build-vercel.mjs  Vercel build (static site and bundled API function)
+docs/API.md               HTTP API reference
+vercel.json               Vercel project settings
+docker-compose.yml        MongoDB and Redis for local development
 ```
 
-## Deploy (Vercel + MongoDB Atlas, free, no card)
+## Deployment
 
-### 1. Database: MongoDB Atlas
+ThreatOrbit deploys to **Vercel** with **MongoDB Atlas**. Both offer free tiers that do not require a payment card.
 
-1. Create a free **M0** cluster at <https://www.mongodb.com/cloud/atlas/register>.
-2. Under **Database & Network Access → Database Users**, create a user with an autogenerated password (letters and numbers only).
-3. Under **Database & Network Access → IP Access List**, click **Add IP Address → Allow access from anywhere** (`0.0.0.0/0`). Vercel functions have no fixed IP; access is still protected by the database password.
-4. Under **Connect → Drivers**, copy the connection string, put your password in it, and add the database name before the `?`:
-   `mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/threat_intel_hub?retryWrites=true&w=majority&appName=Cluster0`
+### 1. Database
 
-### 2. Website and API: Vercel
+1. Create a free **M0** cluster at [mongodb.com/cloud/atlas](https://www.mongodb.com/cloud/atlas/register).
+2. Under **Database Access**, create a database user with a generated password.
+3. Under **Network Access**, allow access from anywhere (`0.0.0.0/0`). Vercel functions do not have fixed IP addresses; access remains protected by the database credentials.
+4. Under **Connect > Drivers**, copy the connection string, insert the password, and add a database name before the `?`:
 
-1. Sign in at <https://vercel.com> with GitHub and go to **Add New → Project** → import this repository.
-2. Leave **Root Directory** at the repository root and **Framework Preset** at *Other*. The build settings come from `vercel.json`.
-3. Open **Environment Variables** and add:
+   ```
+   mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/threat_intel_hub?retryWrites=true&w=majority
+   ```
 
-| Name | Value |
-|---|---|
-| `MONGODB_URI` | The Atlas connection string from step 1. |
-| `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` | Your first admin login. The password needs 12+ characters. |
-| `VIRUSTOTAL_API_KEY`, `ABUSEIPDB_API_KEY`, `OTX_API_KEY`, `URLHAUS_AUTH_KEY` | Your provider keys. |
-| `CRON_SECRET` *(optional)* | A random string of 16+ characters, used for background processing (step 4). |
+### 2. Application
 
-4. Click **Deploy**. When it finishes, open your site (e.g. `https://threatorbit.vercel.app`) and sign in.
-5. Open **Providers** and click **Test key** on each provider. Then open **Team** and add your teammates.
+1. Sign in to [vercel.com](https://vercel.com) with GitHub, choose **Add New > Project** and import this repository.
+2. Keep the repository root as the **Root Directory** and **Other** as the **Framework Preset**. Build settings are read from `vercel.json`.
+3. Add the following **Environment Variables**:
 
-Every `git push` to `main` redeploys automatically.
+   | Variable | Value |
+   |---|---|
+   | `MONGODB_URI` | Connection string from step 1 |
+   | `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` | First administrator account (password of at least 12 characters) |
+   | `VIRUSTOTAL_API_KEY`, `ABUSEIPDB_API_KEY`, `OTX_API_KEY`, `URLHAUS_AUTH_KEY` | Provider API keys |
+   | `CRON_SECRET` (optional) | Random string of at least 16 characters, used for background processing |
 
-### 3. How batches progress
+4. Select **Deploy**, then open the site and sign in.
+5. Open **Providers** and run **Test key** for each provider, then add team members under **Team**.
 
-While a batch page is open, the browser keeps asking the API to process the next lookups (about every 1.5 seconds). Each provider's free-tier rate limit is respected: VirusTotal gets 4 lookups a minute, so a large batch takes a while.
+Every push to `main` triggers a new production deployment.
 
-If you close the page, the batch pauses and picks up where it stopped as soon as anyone opens it again.
+### 3. Batch processing
 
-### 4. Optional: keep batches running with the page closed (free, no card)
+While a batch page is open, the browser requests the next round of lookups roughly every 1.5 seconds. Provider rate limits are always respected; on the VirusTotal free tier (4 requests per minute) a large batch takes time to complete. If every batch page is closed, processing pauses and resumes when the batch is opened again.
 
-1. Set `CRON_SECRET` on Vercel (step 2.3) and redeploy.
-2. Create a free account at <https://cron-job.org> and add a new cron job:
+### 4. Background processing (optional)
+
+To keep batches running with no page open, configure a free scheduler such as [cron-job.org](https://cron-job.org):
 
 | Setting | Value |
 |---|---|
-| URL | `https://<your-site>/api/cron/tick` |
+| URL | `https://<your-domain>/api/cron/tick` |
 | Schedule | Every minute |
-| Advanced → Headers | `Authorization: Bearer <your CRON_SECRET>` |
+| Header | `Authorization: Bearer <CRON_SECRET>` |
+
+`CRON_SECRET` must be set in Vercel and the project redeployed first.
 
 ## Local development
 
+Requirements: Node.js 22.12 or later. Docker is optional.
+
 ```bash
-# Node.js 22.12+
 npm install
-cp backend/.env.example backend/.env   # set ADMIN_EMAIL, ADMIN_PASSWORD and your provider keys
-docker compose up -d                   # optional: MongoDB + Redis. Without it a local MongoDB starts automatically
-npm run dev                            # API on :4000, UI with hot reload on http://127.0.0.1:5173
+cp backend/.env.example backend/.env    # set ADMIN_EMAIL, ADMIN_PASSWORD and provider keys
+docker compose up -d                    # optional: MongoDB and Redis
+npm run dev                             # API on :4000, UI on http://127.0.0.1:5173
 ```
 
-| Command | Purpose |
-|---|---|
-| `npm run build && npm start` | Production build: UI and API together on <http://127.0.0.1:4000>. |
-| `npm test` | Automated test suite. Provider calls are mocked, and the database and queue are real. |
-| `npm run typecheck` | TypeScript checks for both packages. |
-| `npm run format` | Prettier. |
+Without Docker, a local MongoDB instance starts automatically for development.
 
-The first `npm test` downloads a MongoDB binary for the test database. To use an existing one, set `MONGOMS_SYSTEM_BINARY`.
+| Command | Description |
+|---|---|
+| `npm run dev` | API and UI with hot reload |
+| `npm run build && npm start` | Production build served on http://127.0.0.1:4000 |
+| `npm test` | Test suite (providers mocked; database and queue are real) |
+| `npm run typecheck` | TypeScript checks for both packages |
+| `npm run format` | Code formatting with Prettier |
+| `npm run build:vercel` | Build the Vercel output locally |
+
+The first test run downloads a MongoDB binary. Set `MONGOMS_SYSTEM_BINARY` to use an existing installation.
 
 ## Configuration
 
-Every setting is an environment variable. See [`backend/.env.example`](backend/.env.example) for the full list with defaults. The ones that matter most in production:
+All settings are environment variables. [`backend/.env.example`](backend/.env.example) lists every option with its default. The most relevant in production:
 
-| Variable | Purpose |
+| Variable | Description |
 |---|---|
-| `MONGODB_URI` | MongoDB connection string. |
-| `QUEUE_MODE` | `database` on Vercel (set automatically). Self-hosted: `auto` uses BullMQ when `REDIS_URL` answers, otherwise an in-process queue. |
-| `CRON_SECRET` | Enables `GET /api/cron/tick` for an external scheduler. |
-| `TICK_BUDGET_MS` | How long one queue tick processes lookups. Default 20 s. |
-| `TRUST_PROXY` | Number of proxies in front of the app. Set automatically on Vercel. |
-| `ALLOWED_ORIGINS` | Extra site URL(s) allowed to make changes, for the cross-site request check. Same-site requests are always allowed. |
-| `SESSION_TTL_HOURS` | How long a sign-in lasts. Default 12. |
-| `RETENTION_DAYS` / `AUDIT_RETENTION_DAYS` | Automatic data purge. Defaults are 30 and 180. |
-| `<PROVIDER>_REQUESTS_PER_MINUTE` / `<PROVIDER>_DAILY_LIMIT` | Raise these for paid API plans. |
-| `PROVIDERS_DISABLED` | Switch providers off, e.g. `otx,urlhaus`. |
+| `MONGODB_URI` | MongoDB connection string |
+| `QUEUE_MODE` | `database` on Vercel (set automatically). Self-hosted `auto` uses BullMQ when `REDIS_URL` is reachable, otherwise an in-process queue |
+| `CRON_SECRET` | Enables `/api/cron/tick` for an external scheduler |
+| `TICK_BUDGET_MS` | Processing time per queue tick (default 20 seconds) |
+| `TRUST_PROXY` | Number of proxies in front of the application (set automatically on Vercel) |
+| `ALLOWED_ORIGINS` | Additional origins allowed to make state-changing requests |
+| `SESSION_TTL_HOURS` | Session lifetime (default 12 hours) |
+| `RETENTION_DAYS`, `AUDIT_RETENTION_DAYS` | Data retention (defaults 30 and 180 days) |
+| `<PROVIDER>_REQUESTS_PER_MINUTE`, `<PROVIDER>_DAILY_LIMIT` | Raise for paid provider plans |
+| `PROVIDERS_DISABLED` | Comma-separated providers to disable, for example `otx,urlhaus` |
 
 ## Providers
 
-| Provider | Indicator types | Default limits (free tier) | Get a key |
+| Provider | Indicator types | Default limits (free tier) | API key |
 |---|---|---|---|
-| VirusTotal | IPv4, IPv6, domain, URL, MD5, SHA-1, SHA-256 | 4/min, 500/day | <https://www.virustotal.com/gui/my-apikey> |
-| AbuseIPDB | IPv4, IPv6 | 30/min, 1,000/day | <https://www.abuseipdb.com/account/api> |
-| AlienVault OTX | IPv4, IPv6, domain, URL, MD5, SHA-1, SHA-256 | 30/min | <https://otx.alienvault.com/api> |
-| URLhaus | URL, domain, IPv4, MD5, SHA-256 | 30/min | <https://auth.abuse.ch/> |
+| VirusTotal | IPv4, IPv6, domain, URL, MD5, SHA-1, SHA-256 | 4 per minute, 500 per day | [virustotal.com](https://www.virustotal.com/gui/my-apikey) |
+| AbuseIPDB | IPv4, IPv6 | 30 per minute, 1,000 per day | [abuseipdb.com](https://www.abuseipdb.com/account/api) |
+| AlienVault OTX | IPv4, IPv6, domain, URL, MD5, SHA-1, SHA-256 | 30 per minute | [otx.alienvault.com](https://otx.alienvault.com/api) |
+| URLhaus | URL, domain, IPv4, MD5, SHA-256 | 30 per minute | [auth.abuse.ch](https://auth.abuse.ch/) |
 
-A provider without a key shows as *unconfigured* and is never called.
+A provider without a key is shown as unconfigured and is never called.
 
-## Risk rules
+## Risk model
 
-The defaults live in `backend/src/config/riskRules.ts`. To override any part, point `RISK_RULES_PATH` at a JSON file, e.g. `{ "abuseipdb": { "high": 90 } }`. The highest provider signal sets the level, and each provider keeps its own scale:
+Default rules are defined in `backend/src/config/riskRules.ts` and can be overridden by pointing `RISK_RULES_PATH` at a JSON file, for example `{ "abuseipdb": { "high": 90 } }`. The strongest provider signal determines the level, and each provider is assessed on its own scale.
 
 | Provider | Measure | Default thresholds |
 |---|---|---|
-| VirusTotal | Malicious engine count | IPs/domains: High ≥ 5, Medium ≥ 2. URLs: High ≥ 4, Medium ≥ 2. Hashes: High ≥ 10, Medium ≥ 3. |
-| AbuseIPDB | Abuse confidence | High ≥ 75%, Medium ≥ 25%. |
-| OTX | Pulse count | Medium ≥ 10, Low ≥ 1. Pulses alone never make High. |
-| URLhaus | Listing | Listed URL or payload = High. Host with online malware = High. Host with offline history only = Medium. |
+| VirusTotal | Malicious engine count | IPs and domains: High at 5, Medium at 2. URLs: High at 4, Medium at 2. Hashes: High at 10, Medium at 3 |
+| AbuseIPDB | Abuse confidence score | High at 75%, Medium at 25% |
+| AlienVault OTX | Pulse count | Medium at 10, Low at 1. Pulses alone never produce High |
+| URLhaus | Listing status | Listed URL or payload: High. Host with active malware: High. Host with historical listings only: Medium |
 
-**How to read the levels:**
-- **Low** means providers have a record and none flag it significantly. It is not a guarantee of safety.
-- **Unknown** means there is no usable evidence.
-- **Triage only:** the app never blocks, quarantines or deletes anything on its own.
+- **Low** means providers hold records and none flag the indicator significantly. It is not a guarantee of safety.
+- **Unknown** means no usable evidence was returned.
+- ThreatOrbit is a triage tool. It never blocks, quarantines or deletes anything.
 
 ## Security
 
-- **Sign-in:**
-  - Passwords are hashed with scrypt.
-  - Sessions are server-side; the session token lives in an httpOnly, `Secure`, `SameSite=Lax` cookie (with the `__Host-` prefix over HTTPS), and only its hash is stored in the database.
-  - Accounts lock for 15 minutes after 5 failed sign-ins, and sign-in is also rate-limited per IP.
-  - A password reset, deactivation or role change signs the user out everywhere.
-- **Authorization:** every API route except health and sign-in requires a session. Admin-only routes are enforced on the server, not just hidden in the UI.
-- **Cross-site requests:** state-changing requests from other origins are rejected, on top of the SameSite cookie protection.
-- **Provider keys:** they exist only as server environment variables. They are never sent to the browser, logged or stored, and a test sweeps every endpoint for them.
-- **Outbound requests (SSRF guard):** https only, to each provider's allowlisted host, with redirects refused and a hard timeout.
-- **Browser hardening:** a strict Content-Security-Policy and security headers on the site and the API, request validation (Zod), checks on upload size, type and encoding, and React escaping. Provider links are only rendered when they are `https://`.
-- **Logs and exports:** request logs record only the method, path and status, never query strings or bodies. CSV exports are protected against formula injection. The audit log never records indicator values.
+| Area | Controls |
+|---|---|
+| Authentication | scrypt password hashing; server-side sessions storing only token hashes; `httpOnly`, `Secure`, `SameSite=Lax` cookies with the `__Host-` prefix; account lockout after 5 failed attempts; per-IP sign-in rate limiting; sessions revoked on password reset, deactivation or role change |
+| Authorization | Every route except health and sign-in requires a session. Role checks are enforced server-side |
+| Request integrity | Cross-origin state-changing requests are rejected in addition to SameSite protection |
+| Secrets | Provider keys exist only as server environment variables and are never sent to the browser, logged or stored. Automated tests verify this across all endpoints |
+| Outbound requests | HTTPS only, restricted to each provider's allowlisted host, redirects refused, hard timeouts |
+| Application hardening | Strict Content Security Policy and security headers, schema validation on every request, upload size, type and encoding checks |
+| Data handling | Request logs exclude query strings and bodies; CSV exports are protected against formula injection; the audit log never records indicator values |
 
-## API
+## API reference
 
-See [docs/API.md](docs/API.md).
+The full HTTP API is documented in [docs/API.md](docs/API.md).

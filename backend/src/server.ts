@@ -34,7 +34,7 @@ async function main() {
   const app = createApp(config, logger, { staticDir, enrichment, auth, databaseMode: db.mode });
 
   const server = app.listen(config.port, config.host, () => {
-    logger.info({ url: `http://${config.host}:${config.port}` }, 'Threat Intel Hub listening');
+    logger.info({ url: `http://${config.host}:${config.port}` }, 'ThreatOrbit listening');
   });
 
   let stopping = false;

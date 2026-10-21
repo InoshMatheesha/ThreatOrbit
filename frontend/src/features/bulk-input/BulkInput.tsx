@@ -13,7 +13,7 @@ interface Props {
 }
 
 const MODES: Array<{ value: ParseMode; label: string; hint: string }> = [
-  { value: 'lines', label: 'One per line', hint: 'Every non-empty line is checked and reported' },
+  { value: 'lines', label: 'List', hint: 'One per line, or several per line separated by commas, semicolons or spaces' },
   { value: 'extract', label: 'Extract from text', hint: 'Paste an email or report; IOCs are pulled out of the prose' },
 ];
 
@@ -127,7 +127,7 @@ export function BulkInput({ input, mode, onInputChange, onModeChange }: Props) {
             aria-label="Indicators"
             placeholder={
               mode === 'lines'
-                ? 'Paste IPs, hashes, domains and URLs, one per line.\nDefanged values like hxxps://evil[.]com are fine.\nOr drop a .txt / .csv file here.'
+                ? 'Paste IPs, hashes, domains and URLs, one per line or comma-separated.\nDefanged values like hxxps://evil[.]com are fine.\nOr drop a .txt / .csv file here.'
                 : 'Paste a phishing email, incident report or chat log.\nIndicators are extracted automatically.'
             }
             className="block h-56 w-full resize-y bg-transparent px-3 py-2 font-mono text-xs leading-5 outline-none placeholder:text-slate-400"

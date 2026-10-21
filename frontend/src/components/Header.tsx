@@ -17,8 +17,8 @@ export function Header() {
       <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4 px-4 py-1.5">
         <div className="flex items-center gap-5">
           <Link to="/" className="flex items-center gap-2">
-            <img src="/favicon.svg" alt="" className="h-5 w-5" />
-            <span className="text-sm font-semibold tracking-tight">Threat Intel Hub</span>
+            <img src="/logo.png" alt="" className="h-7 w-7" />
+            <span className="text-sm font-semibold tracking-tight">ThreatOrbit</span>
           </Link>
           <nav className="flex gap-1">
             {nav.map((n) => (

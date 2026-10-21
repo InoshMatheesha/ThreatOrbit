@@ -13,7 +13,7 @@ describe('app', () => {
     const { app } = testApp();
     const res = await request(app).get('/api/health');
     expect(res.status).toBe(200);
-    expect(res.body.data).toMatchObject({ status: 'ok', service: 'threat-intel-hub' });
+    expect(res.body.data).toMatchObject({ status: 'ok', service: 'threatorbit' });
   });
 
   it('sets security headers and hides the framework', async () => {

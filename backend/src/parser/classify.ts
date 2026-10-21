@@ -36,7 +36,7 @@ export function classifyIndicator(input: string, domainOptions: DomainOptions = 
   if (/\s/.test(s)) {
     return {
       ok: false,
-      error: 'Contains whitespace: submit one indicator per line, or use free-text extraction mode',
+      error: 'Contains whitespace: separate indicators with new lines or commas, or use free-text extraction mode',
     };
   }
 
