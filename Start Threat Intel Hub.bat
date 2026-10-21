@@ -22,9 +22,15 @@ if errorlevel 1 (
   goto :fail
 )
 for /f "tokens=1 delims=v." %%v in ('node -v') do set "NODE_MAJOR=%%v"
-if %NODE_MAJOR% LSS 20 (
-  echo   [!] Node.js 20 or newer is required. You have:
+if %NODE_MAJOR% LSS 22 (
+  echo   [!] Node.js 22 or newer is required. You have:
   node -v
+  goto :fail
+)
+for /f %%a in ('node -p "process.arch"') do set "NODE_ARCH=%%a"
+if /i not "%NODE_ARCH%"=="x64" if /i not "%NODE_ARCH%"=="arm64" (
+  echo   [!] Your Node.js is %NODE_ARCH%, but 64-bit Node.js is required.
+  echo       Uninstall it and install the 64-bit Windows LTS from https://nodejs.org
   goto :fail
 )
 
@@ -36,20 +42,46 @@ if not errorlevel 1 (
   exit /b 0
 )
 
-rem --- 3. First run: API keys -> backend\.env (gitignored, stays on this PC) -
+rem --- 3. First run: save API keys to backend\.env (gitignored, stays on this PC) -
 if not exist "backend\.env" (
   call :setup_env
   if errorlevel 1 goto :fail
 )
 
-rem --- 4. Install, build, start ----------------------------------------------
+rem --- 4. Database and queue ----------------------------------------------------
+rem With Docker Desktop running, use real MongoDB + Redis containers. Otherwise the
+rem app starts its own local MongoDB and an in-process queue automatically.
+docker info >nul 2>nul
+if errorlevel 1 goto :no_docker
+echo   Docker found: starting MongoDB and Redis containers...
+docker compose up -d --wait >nul 2>nul
+if errorlevel 1 echo   [i] Could not start the containers. Using the built-in database and queue instead.
+goto :install
+:no_docker
+echo   Docker not running: using the built-in database and queue.
+echo   The first start downloads MongoDB, about 100 MB, so it can take a few minutes.
+
+:install
+rem --- 5. Install, build, start ----------------------------------------------
 echo   [1/3] Installing dependencies (the first run takes a minute)...
 call npm install --no-audit --no-fund --loglevel=error
 if errorlevel 1 goto :fail
 
 echo   [2/3] Building...
 call npm run build --silent
+if not errorlevel 1 goto :launch
+
+rem A failed build is almost always a half-written native module, e.g. an
+rem interrupted install or antivirus interference. Reinstall once from scratch.
+echo.
+echo   [!] Build failed. Repairing: reinstalling dependencies from scratch...
+call :clean_modules
+call npm install --no-audit --no-fund --loglevel=error
 if errorlevel 1 goto :fail
+call npm run build --silent
+if errorlevel 1 goto :build_fail
+
+:launch
 
 echo   [3/3] Starting on %APP_URL%
 echo.
@@ -84,6 +116,25 @@ if errorlevel 1 exit /b 1
 echo   Saved backend\.env  (edit it any time to change keys)
 echo.
 exit /b 0
+
+
+:clean_modules
+if exist "node_modules" rmdir /s /q "node_modules"
+if exist "backend\node_modules" rmdir /s /q "backend\node_modules"
+if exist "frontend\node_modules" rmdir /s /q "frontend\node_modules"
+exit /b 0
+
+
+:build_fail
+echo.
+echo   [!] The build still fails after a clean reinstall.
+echo       Node.js:
+node -p "'      ' + process.version + ' ' + process.arch"
+echo       Antivirus is the usual cause: it can block or corrupt the native .node
+echo       files npm extracts. Add this folder to your antivirus exclusions, then
+echo       run this file again:
+echo       %~dp0
+goto :fail
 
 
 :fail

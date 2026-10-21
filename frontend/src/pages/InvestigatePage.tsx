@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { BulkInput } from '../features/bulk-input/BulkInput';
+import { EnrichDialog } from '../features/bulk-input/EnrichDialog';
 import { usePreview, type PreviewInput } from '../features/bulk-input/usePreview';
 import { PreviewSummary } from '../features/results/PreviewSummary';
 import { PreviewTable } from '../features/results/PreviewTable';
@@ -9,13 +10,14 @@ export function InvestigatePage() {
   const [input, setInput] = useState<PreviewInput>({ kind: 'text', text: '' });
   const [mode, setMode] = useState<ParseMode>('lines');
   const { result, error, loading } = usePreview(input, mode);
+  const [enriching, setEnriching] = useState(false);
 
   return (
     <main className="mx-auto max-w-[1400px] space-y-3 px-4 py-4">
       <div className="flex items-baseline justify-between">
         <h1 className="text-base font-semibold">Bulk IOC preview</h1>
         <span className="text-xs text-slate-500">
-          {loading ? 'Parsing…' : 'Validated locally. Nothing is sent to threat intel providers at this step.'}
+          {loading ? 'Parsing…' : 'Validated locally. Nothing is sent to providers until you click Enrich and confirm.'}
         </span>
       </div>
 
@@ -29,8 +31,9 @@ export function InvestigatePage() {
 
       {result ? (
         <>
-          <PreviewSummary result={result} />
+          <PreviewSummary result={result} onEnrich={() => setEnriching(true)} />
           <PreviewTable entries={result.entries} />
+          {enriching && <EnrichDialog input={input} mode={mode} preview={result} onClose={() => setEnriching(false)} />}
         </>
       ) : (
         !error && (
