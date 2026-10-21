@@ -1,0 +1,17 @@
+{
+  "name": "threatorbit",
+  "private": true,
+  "description": "Threat Intel Hub: bulk IOC enrichment for SOC analysts",
+  "workspaces": [
+    "backend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev -w backend",
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}
