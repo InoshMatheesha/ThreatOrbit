@@ -3,6 +3,7 @@ import { TYPE_LABELS, type IndicatorType, type PreviewResult } from '../../lib/a
 
 interface Props {
   result: PreviewResult;
+  onEnrich: () => void;
 }
 
 function Stat({ label, value, tone }: { label: string; value: number; tone?: 'good' | 'bad' | 'warn' | 'muted' }) {
@@ -20,7 +21,7 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: 'go
   );
 }
 
-export function PreviewSummary({ result }: Props) {
+export function PreviewSummary({ result, onEnrich }: Props) {
   const { stats, limits, indicators } = result;
   const [copied, setCopied] = useState(false);
 
@@ -63,7 +64,7 @@ export function PreviewSummary({ result }: Props) {
         <p className="max-w-3xl">
           <strong>Before enriching:</strong> eligible indicators will be sent to third-party providers (VirusTotal, AbuseIPDB, AlienVault OTX,
           URLhaus, GreyNoise). Don't submit indicators that are themselves sensitive, like internal hostnames or customer data in URLs. Private
-          IPs and internal domains are already kept local.
+          IPs and internal domains are already kept local. Use demo mode to try the workflow without sending anything.
         </p>
         <div className="flex items-center gap-2">
           <button type="button" className="btn" onClick={copyClean} disabled={eligible.length === 0}>
@@ -71,11 +72,12 @@ export function PreviewSummary({ result }: Props) {
           </button>
           <button
             type="button"
-            disabled
-            title="Provider lookups arrive in the next build stage. Nothing is sent anywhere yet."
-            className="cursor-not-allowed rounded bg-sky-600/40 px-3 py-1.5 text-xs font-medium text-white/70"
+            className="btn-primary"
+            disabled={stats.eligible === 0 || !limits.withinBatchLimit}
+            onClick={onEnrich}
+            title={!limits.withinBatchLimit ? 'Over the batch limit' : undefined}
           >
-            Enrich {stats.eligible} · coming soon
+            Enrich {stats.eligible}…
           </button>
         </div>
       </div>

@@ -22,8 +22,8 @@ if errorlevel 1 (
   goto :fail
 )
 for /f "tokens=1 delims=v." %%v in ('node -v') do set "NODE_MAJOR=%%v"
-if %NODE_MAJOR% LSS 20 (
-  echo   [!] Node.js 20 or newer is required. You have:
+if %NODE_MAJOR% LSS 22 (
+  echo   [!] Node.js 22 or newer is required. You have:
   node -v
   goto :fail
 )
@@ -48,7 +48,21 @@ if not exist "backend\.env" (
   if errorlevel 1 goto :fail
 )
 
-rem --- 4. Install, build, start ----------------------------------------------
+rem --- 4. Database and queue ----------------------------------------------------
+rem With Docker Desktop running, use real MongoDB + Redis containers. Otherwise the
+rem app starts its own local MongoDB and an in-process queue automatically.
+docker info >nul 2>nul
+if errorlevel 1 goto :no_docker
+echo   Docker found: starting MongoDB and Redis containers...
+docker compose up -d --wait >nul 2>nul
+if errorlevel 1 echo   [i] Could not start the containers. Using the built-in database and queue instead.
+goto :install
+:no_docker
+echo   Docker not running: using the built-in database and queue.
+echo   The first start downloads MongoDB, about 100 MB, so it can take a few minutes.
+
+:install
+rem --- 5. Install, build, start ----------------------------------------------
 echo   [1/3] Installing dependencies (the first run takes a minute)...
 call npm install --no-audit --no-fund --loglevel=error
 if errorlevel 1 goto :fail

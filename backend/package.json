@@ -12,11 +12,15 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "bullmq": "^6.4.0",
     "csv-parse": "^7.0.3",
     "express": "^5.3.0",
     "express-rate-limit": "^8.7.1",
     "helmet": "^8.3.0",
+    "ioredis": "^6.0.0",
     "ipaddr.js": "^2.5.0",
+    "mongodb-memory-server-core": "^11.3.0",
+    "mongoose": "^9.11.2",
     "multer": "^2.4.0",
     "pino": "^10.4.0",
     "tldts": "^7.4.19",
