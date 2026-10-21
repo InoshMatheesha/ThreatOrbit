@@ -73,7 +73,7 @@ export function userHandlers(logger: Logger) {
     const updated = await User.findByIdAndUpdate(
       id,
       { $set: changes, ...(body.password ? { $unset: { lockedUntil: 1 } } : {}) },
-      { new: true },
+      { returnDocument: 'after' },
     );
     // Deactivation, role change and password reset all end existing sessions.
     if (body.active === false || body.password !== undefined || body.role !== undefined) await Session.deleteMany({ userId: user._id });

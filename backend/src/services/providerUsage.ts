@@ -1,3 +1,4 @@
+import { incrementBelow } from '../lib/counter.js';
 import { ProviderUsage } from '../models/ProviderUsage.js';
 
 export function utcDay(date = new Date()): string {
@@ -14,18 +15,7 @@ export async function reserveRequest(provider: string, dailyLimit: number | null
     await ProviderUsage.updateOne({ provider, day }, { $inc: { count: 1 } }, { upsert: true });
     return true;
   }
-  try {
-    const doc = await ProviderUsage.findOneAndUpdate(
-      { provider, day, count: { $lt: dailyLimit } },
-      { $inc: { count: 1 } },
-      { upsert: true, new: true },
-    );
-    return Boolean(doc);
-  } catch (err) {
-    // Upsert collides with the existing (full) document: quota reached.
-    if ((err as { code?: number }).code === 11000) return false;
-    throw err;
-  }
+  return incrementBelow(ProviderUsage, { provider, day }, dailyLimit);
 }
 
 export async function usageToday(): Promise<Map<string, number>> {

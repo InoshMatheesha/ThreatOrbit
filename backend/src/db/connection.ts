@@ -3,7 +3,18 @@ import path from 'node:path';
 import mongoose from 'mongoose';
 import type { Logger } from 'pino';
 import type { AppConfig } from '../config/env.js';
-import { AuditEvent, Batch, EnrichmentResult, Indicator, ProviderUsage, Session, User } from '../models/index.js';
+import {
+  AuditEvent,
+  Batch,
+  EnrichmentResult,
+  Indicator,
+  ProviderPause,
+  ProviderUsage,
+  ProviderWindow,
+  Session,
+  SystemLock,
+  User,
+} from '../models/index.js';
 
 export interface DatabaseHandle {
   mode: 'external' | 'embedded';
@@ -12,8 +23,21 @@ export interface DatabaseHandle {
 
 const DB_NAME = 'threat_intel_hub';
 
+const MODELS = [Batch, EnrichmentResult, Indicator, AuditEvent, ProviderUsage, User, Session, ProviderWindow, ProviderPause, SystemLock];
+
 async function syncIndexes() {
-  await Promise.all([Batch, EnrichmentResult, Indicator, AuditEvent, ProviderUsage, User, Session].map((m) => m.syncIndexes()));
+  await Promise.all(MODELS.map((m) => m.syncIndexes()));
+}
+
+/**
+ * Serverless variant: connect once per function instance and reuse it across
+ * invocations. Only creates missing indexes (cheap), never drops any.
+ */
+export async function connectServerless(config: AppConfig): Promise<void> {
+  if (mongoose.connection.readyState === 1) return;
+  mongoose.set('strictQuery', true);
+  await mongoose.connect(config.database.uri, { serverSelectionTimeoutMS: 8_000, maxPoolSize: 5 });
+  await Promise.all(MODELS.map((m) => m.createIndexes()));
 }
 
 /**

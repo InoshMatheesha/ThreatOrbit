@@ -14,13 +14,15 @@
     "test": "npm test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "format": "prettier --write \"backend/src/**/*.ts\" \"frontend/src/**/*.{ts,tsx,css}\" \"*.{json,yaml}\" \"frontend/*.{json,ts}\" \"backend/*.{json,ts}\"",
-    "format:check": "prettier --check \"backend/src/**/*.ts\" \"frontend/src/**/*.{ts,tsx,css}\" \"*.{json,yaml}\" \"frontend/*.{json,ts}\" \"backend/*.{json,ts}\""
+    "format:check": "prettier --check \"backend/src/**/*.ts\" \"frontend/src/**/*.{ts,tsx,css}\" \"*.{json,yaml}\" \"frontend/*.{json,ts}\" \"backend/*.{json,ts}\"",
+    "build:vercel": "node scripts/build-vercel.mjs"
   },
   "engines": {
     "node": ">=22.12"
   },
   "devDependencies": {
     "concurrently": "^10.0.6",
+    "esbuild": "^0.28.2",
     "prettier": "^3.9.10"
   }
 }

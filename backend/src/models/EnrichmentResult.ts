@@ -41,6 +41,8 @@ export interface EnrichmentResultDoc {
   cacheStatus?: 'hit' | 'miss';
   cachedFromId?: Types.ObjectId;
   error?: LookupError;
+  /** Earliest time a queued lookup may run again (retry backoff). */
+  nextAttemptAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -68,11 +70,14 @@ const resultSchema = new Schema<EnrichmentResultDoc>(
     cacheStatus: { type: String, enum: ['hit', 'miss'] },
     cachedFromId: { type: Schema.Types.ObjectId },
     error: { _id: false, kind: String, message: String, httpStatus: Number, at: Date },
+    nextAttemptAt: Date,
   },
   { timestamps: true, versionKey: false },
 );
 resultSchema.index({ batchId: 1, itemIndex: 1 });
 resultSchema.index({ batchId: 1, status: 1 });
+// Database queue: oldest due lookup per provider.
+resultSchema.index({ provider: 1, status: 1, nextAttemptAt: 1, createdAt: 1 });
 // Cache lookups: newest completed result for this indicator from this provider.
 resultSchema.index({ provider: 1, type: 1, value: 1, status: 1, expiresAt: -1 });
 

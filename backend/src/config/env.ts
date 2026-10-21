@@ -47,7 +47,16 @@ const envSchema = z.object({
   EMBEDDED_MONGODB_DIR: z.string().default('.data/mongodb'),
   REDIS_URL: z.string().default('redis://127.0.0.1:6379'),
   /** auto: BullMQ when Redis answers, otherwise the in-process development queue. */
-  QUEUE_MODE: z.enum(['auto', 'bullmq', 'memory']).default('auto'),
+  /** database: lookups are queued in MongoDB and processed in short bursts (serverless hosting). */
+  QUEUE_MODE: z.enum(['auto', 'bullmq', 'memory', 'database']).default('auto'),
+  /** Shared secret for an external scheduler to advance the database queue (GET /api/cron/tick). */
+  CRON_SECRET: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.trim() ? v.trim() : undefined))
+    .pipe(z.string().min(16, 'CRON_SECRET must be at least 16 characters').optional()),
+  /** How long one queue tick may process lookups (must stay under the host's function time limit). */
+  TICK_BUDGET_MS: z.coerce.number().int().min(1000).max(280_000).default(20_000),
 
   CACHE_TTL_HOURS: z.coerce.number().positive().default(24),
   RETENTION_DAYS: z.coerce.number().int().positive().default(30),
@@ -100,7 +109,7 @@ export type AppConfig = {
     apiRateLimitPerMinute: number;
   };
   database: { uri: string; embeddedFallback: boolean; embeddedDir: string };
-  queue: { mode: 'auto' | 'bullmq' | 'memory'; redisUrl: string };
+  queue: { mode: 'auto' | 'bullmq' | 'memory' | 'database'; redisUrl: string; cronSecret: string | null; tickBudgetMs: number };
   enrichment: {
     cacheTtlMs: number;
     timeoutMs: number;
@@ -167,7 +176,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         : e.NODE_ENV !== 'production',
       embeddedDir: e.EMBEDDED_MONGODB_DIR,
     },
-    queue: { mode: e.QUEUE_MODE, redisUrl: e.REDIS_URL },
+    queue: { mode: e.QUEUE_MODE, redisUrl: e.REDIS_URL, cronSecret: e.CRON_SECRET ?? null, tickBudgetMs: e.TICK_BUDGET_MS },
     enrichment: {
       cacheTtlMs: e.CACHE_TTL_HOURS * 3_600_000,
       timeoutMs: e.PROVIDER_TIMEOUT_MS,
