@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
+}
+
+html { color-scheme: light dark; }
+body { @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased; }
+
+@layer components {
+  .btn {
+    @apply rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800;
+  }
+  .input {
+    @apply rounded border border-slate-200 bg-white px-2 py-1 text-xs outline-none focus:border-sky-500 dark:border-slate-700 dark:bg-slate-900;
+  }
+  .badge {
+    @apply inline-block rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap;
+  }
+}

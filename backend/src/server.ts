@@ -1,13 +1,16 @@
+import { fileURLToPath } from 'node:url';
 import { createApp } from './app.js';
 import { loadConfig } from './config/env.js';
 import { createLogger } from './lib/logger.js';
 
 const config = loadConfig();
 const logger = createLogger(config.logLevel);
-const app = createApp(config, logger);
+// Works from both src/ (tsx) and dist/ (node): both sit one level below backend/.
+const staticDir = process.env.STATIC_DIR ?? fileURLToPath(new URL('../../frontend/dist', import.meta.url));
+const app = createApp(config, logger, { staticDir });
 
 const server = app.listen(config.port, config.host, () => {
-  logger.info({ host: config.host, port: config.port }, 'Threat Intel Hub API listening');
+  logger.info({ url: `http://${config.host}:${config.port}` }, 'Threat Intel Hub listening');
   if (config.allowUnauthenticatedRemote) {
     logger.warn('ALLOW_UNAUTHENTICATED_REMOTE is enabled: the API has no authentication');
   }

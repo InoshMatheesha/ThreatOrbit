@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import express, { type Express } from 'express';
 import helmet from 'helmet';
 import type { Logger } from 'pino';
@@ -9,11 +11,25 @@ import { requestLogger } from './middleware/requestLogger.js';
 import { batchesRouter } from './routes/batches.js';
 import { healthRouter } from './routes/health.js';
 
-export function createApp(config: AppConfig, logger: Logger = createLogger(config.logLevel)): Express {
+export interface AppOptions {
+  /** Built frontend (frontend/dist). When present, the UI is served from the same origin as the API. */
+  staticDir?: string;
+}
+
+export function createApp(
+  config: AppConfig,
+  logger: Logger = createLogger(config.logLevel),
+  options: AppOptions = {},
+): Express {
   const app = express();
   app.disable('x-powered-by');
 
-  app.use(helmet());
+  app.use(
+    helmet({
+      // Served over plain http on loopback, so upgrading subresources to https would break the UI.
+      contentSecurityPolicy: { directives: { upgradeInsecureRequests: null } },
+    }),
+  );
   app.use(requestLogger(logger));
   app.use('/api', apiRateLimit(config.limits.apiRateLimitPerMinute));
   // Pasted text is held to the same budget as an uploaded file (plus JSON overhead).
@@ -23,6 +39,13 @@ export function createApp(config: AppConfig, logger: Logger = createLogger(confi
   app.use('/api/batches', batchesRouter(config));
 
   app.use('/api', notFoundHandler);
+
+  const { staticDir } = options;
+  if (staticDir && fs.existsSync(path.join(staticDir, 'index.html'))) {
+    app.use(express.static(staticDir, { index: 'index.html', maxAge: '1h' }));
+    // Single-page app: unknown non-API GETs get the shell.
+    app.get('/{*splat}', (_req, res) => res.sendFile(path.join(staticDir, 'index.html')));
+  }
   app.use(errorHandler(logger));
   return app;
 }
