@@ -121,7 +121,8 @@ export interface AiSettings {
 
 export type ClientFactory = (settings: AiSettings) => AiClient;
 
-const defaultFactory: ClientFactory = (s) => (s.provider === 'gemini' ? createGeminiClient(s) : createAnthropicClient(s));
+const defaultFactory: ClientFactory = (s) =>
+  s.provider === 'gemini' ? createGeminiClient({ apiKey: s.apiKey, model: s.model }) : createAnthropicClient(s);
 
 const SETTING_ID = 'ai';
 /** How long a function instance trusts what it read from the database before asking again. */
@@ -419,8 +420,18 @@ export class AiService {
         );
       case 'truncated':
         return new ApiError(502, 'AI_UNAVAILABLE', 'The AI ran out of room while writing. Try again.');
-      default:
-        return new ApiError(502, 'AI_UNAVAILABLE', 'The AI service could not be reached. Try again shortly.');
+      default: {
+        // The provider's own message (never the key) tells an administrator what went wrong.
+        const detail = err instanceof AiClientError ? err.message.replace(/\s+/g, ' ').slice(0, 180) : '';
+        const code = err instanceof AiClientError && err.status ? ` (HTTP ${err.status})` : '';
+        return new ApiError(
+          502,
+          'AI_UNAVAILABLE',
+          detail
+            ? `The AI service had a problem${code}: ${detail}. Try again shortly.`
+            : 'The AI service could not be reached. Try again shortly.',
+        );
+      }
     }
   }
 }

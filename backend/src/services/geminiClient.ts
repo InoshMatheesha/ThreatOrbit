@@ -1,7 +1,10 @@
 import { AiClientError, type AiClient, type AiModelInfo, type AiRequest } from './aiClient.js';
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';
-const REQUEST_TIMEOUT_MS = 40_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+/** Whole-request budget, kept under the 60 s limit of the serverless function. */
+const TOTAL_BUDGET_MS = 46_000;
+const MAX_TRANSIENT_RETRIES = 2;
 const MAX_OUTPUT_TOKENS = 8192;
 
 /** Gemini wants an OpenAPI-style schema: upper-case types and no `additionalProperties`. */
@@ -49,14 +52,19 @@ function failure(status: number, body: GeminiError | null): AiClientError {
   return new AiClientError('failed', message, status);
 }
 
-async function call(url: string, apiKey: string, init: { method: 'GET' } | { method: 'POST'; body: unknown }) {
+async function call(
+  url: string,
+  apiKey: string,
+  init: { method: 'GET' } | { method: 'POST'; body: unknown },
+  timeoutMs = REQUEST_TIMEOUT_MS,
+) {
   let res: Response;
   try {
     res = await fetch(url, {
       method: init.method,
       headers: { 'x-goog-api-key': apiKey, ...(init.method === 'POST' ? { 'content-type': 'application/json' } : {}) },
       ...(init.method === 'POST' ? { body: JSON.stringify(init.body) } : {}),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(Math.max(1000, timeoutMs)),
       redirect: 'error',
     });
   } catch (err) {
@@ -73,11 +81,23 @@ interface GenerateResponse {
   modelVersion?: string;
 }
 
-export function createGeminiClient({ apiKey, model }: { apiKey: string; model: string }): AiClient {
+const sleepFor = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+export function createGeminiClient({
+  apiKey,
+  model,
+  sleep = sleepFor,
+}: {
+  apiKey: string;
+  model: string;
+  sleep?: (ms: number) => Promise<void>;
+}): AiClient {
   return {
     async generate({ system, prompt, schema }: AiRequest) {
       const url = `${BASE}/models/${encodeURIComponent(model)}:generateContent`;
-      const body = (withSchema: boolean) => ({
+      let useSchema = true;
+      let thinkingOff = true;
+      const body = () => ({
         // The schema is also spelled out in words, so a model or API version that ignores responseSchema still complies.
         systemInstruction: {
           parts: [{ text: `${system}\n\nReply with a single JSON object that matches this JSON Schema:\n${JSON.stringify(schema)}` }],
@@ -85,24 +105,45 @@ export function createGeminiClient({ apiKey, model }: { apiKey: string; model: s
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: 'application/json',
-          ...(withSchema ? { responseSchema: toGeminiSchema(schema) } : {}),
+          ...(useSchema ? { responseSchema: toGeminiSchema(schema) } : {}),
+          // Short plain-language answers do not need long "thinking", which only adds seconds and cost.
+          ...(thinkingOff ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
           maxOutputTokens: MAX_OUTPUT_TOKENS,
         },
       });
 
-      let json: GenerateResponse;
-      try {
-        json = (await call(url, apiKey, { method: 'POST', body: body(true) })) as GenerateResponse;
-      } catch (err) {
-        // A schema the API rejects (it supports only part of JSON Schema) should not take the feature down.
-        if (
-          err instanceof AiClientError &&
-          err.kind === 'failed' &&
-          err.status === 400 &&
-          /schema|response_?schema|generation_?config/i.test(err.message)
-        ) {
-          json = (await call(url, apiKey, { method: 'POST', body: body(false) })) as GenerateResponse;
-        } else {
+      const deadline = Date.now() + TOTAL_BUDGET_MS;
+      let transientRetries = 0;
+      let json: GenerateResponse | undefined;
+      while (!json) {
+        try {
+          json = (await call(
+            url,
+            apiKey,
+            { method: 'POST', body: body() },
+            Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()),
+          )) as GenerateResponse;
+        } catch (err) {
+          if (!(err instanceof AiClientError)) throw err;
+          // The API supports only part of JSON Schema and not every option on every model: drop what it objects to and ask again.
+          if (err.kind === 'failed' && err.status === 400) {
+            if (thinkingOff && /thinking/i.test(err.message)) {
+              thinkingOff = false;
+              continue;
+            }
+            if (useSchema && /schema|generation_?config/i.test(err.message)) {
+              useSchema = false;
+              continue;
+            }
+            throw err;
+          }
+          // Free-tier Gemini is often briefly overloaded or rate limited: a short wait usually clears it.
+          const transient = err.kind === 'busy' || (err.kind === 'failed' && (err.status === undefined || err.status >= 500));
+          if (transient && transientRetries < MAX_TRANSIENT_RETRIES && deadline - Date.now() > 12_000) {
+            transientRetries++;
+            await sleep(1500 * transientRetries);
+            continue;
+          }
           throw err;
         }
       }

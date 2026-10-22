@@ -184,6 +184,7 @@ describe('AI explanations', () => {
     [new AiClientError('busy', 'secret internal detail'), 503, /busy/],
     [new AiClientError('rejected_key', 'sk-ant-secret-key'), 502, /key was rejected/],
     [new Error('socket hang up sk-ant-secret'), 502, /could not be reached/],
+    [new AiClientError('failed', 'The model is overloaded.', 503), 502, /HTTP 503.*overloaded/],
   ])('turns model failures into plain messages without leaking details (%#)', async (fail, status, message) => {
     const { agent, id } = await setup(fakeAi({ fail }));
     const res = await agent.post(`/api/batches/${id}/explanation`).send({});

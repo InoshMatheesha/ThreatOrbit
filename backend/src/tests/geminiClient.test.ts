@@ -37,10 +37,13 @@ function stubFetch(responses: Array<{ status: number; body: unknown }>) {
 
 afterEach(() => vi.unstubAllGlobals());
 
+const noWait = async () => {};
+const client = (model = 'm') => createGeminiClient({ apiKey: 'k-12345678', model, sleep: noWait });
+
 describe('Gemini client', () => {
   it('sends the key in a header (never the URL), asks for JSON in the schema, and ignores thinking text', async () => {
     const calls = stubFetch([{ status: 200, body: ok() }]);
-    const result = await createGeminiClient({ apiKey: 'AIza-test-key-123', model: 'gemini-2.5-flash' }).generate(request);
+    const result = await createGeminiClient({ apiKey: 'AIza-test-key-123', model: 'gemini-2.5-flash', sleep: noWait }).generate(request);
     expect(result).toEqual({ text: '{"a":"b"}', model: 'gemini-2.5-flash' });
 
     const call = calls[0]!;
@@ -66,7 +69,7 @@ describe('Gemini client', () => {
       },
       { status: 200, body: ok() },
     ]);
-    const result = await createGeminiClient({ apiKey: 'k-12345678', model: 'm' }).generate(request);
+    const result = await client().generate(request);
     expect(result.text).toBe('{"a":"b"}');
     expect(calls).toHaveLength(2);
     expect(JSON.parse(String(calls[1]!.init.body)).generationConfig).not.toHaveProperty('responseSchema');
@@ -95,12 +98,59 @@ describe('Gemini client', () => {
     [503, { error: { code: 503, status: 'UNAVAILABLE', message: 'overloaded' } }, 'failed'],
   ])('maps response %i to failure kind "%#"', async (status, body, kind) => {
     stubFetch([{ status, body }]);
-    const err = await createGeminiClient({ apiKey: 'k-12345678', model: 'm' })
+    const err = await client()
       .generate(request)
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AiClientError);
     expect((err as AiClientError).kind).toBe(kind);
     expect((err as AiClientError).message).not.toContain('k-12345678');
+  });
+
+  it('keeps short answers fast by turning thinking off, and drops that option if a model refuses it', async () => {
+    const calls = stubFetch([
+      {
+        status: 400,
+        body: { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'Budget 0 is invalid. This model only works in thinking mode.' } },
+      },
+      { status: 200, body: ok() },
+    ]);
+    await client().generate(request);
+    expect(JSON.parse(String(calls[0]!.init.body)).generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    expect(calls).toHaveLength(2);
+    expect(JSON.parse(String(calls[1]!.init.body)).generationConfig).not.toHaveProperty('thinkingConfig');
+    expect(JSON.parse(String(calls[1]!.init.body)).generationConfig).toHaveProperty('responseSchema');
+  });
+
+  it('waits and tries again when Gemini is briefly overloaded or rate limited', async () => {
+    const calls = stubFetch([
+      { status: 503, body: { error: { code: 503, status: 'UNAVAILABLE', message: 'The model is overloaded. Please try again later.' } } },
+      { status: 429, body: { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'slow down' } } },
+      { status: 200, body: ok() },
+    ]);
+    const result = await client().generate(request);
+    expect(result.text).toBe('{"a":"b"}');
+    expect(calls).toHaveLength(3);
+  });
+
+  it('gives up after a few tries and does not retry what cannot succeed', async () => {
+    const overloaded = stubFetch([
+      { status: 503, body: { error: { code: 503, status: 'UNAVAILABLE', message: 'The model is overloaded.' } } },
+    ]);
+    const err = await client()
+      .generate(request)
+      .catch((e: unknown) => e);
+    expect((err as AiClientError).kind).toBe('failed');
+    expect((err as AiClientError).message).toContain('overloaded');
+    expect(overloaded).toHaveLength(3);
+    vi.unstubAllGlobals();
+
+    const badKey = stubFetch([
+      { status: 400, body: { error: { code: 400, message: 'API key not valid.', details: [{ reason: 'API_KEY_INVALID' }] } } },
+    ]);
+    await client()
+      .generate(request)
+      .catch(() => undefined);
+    expect(badKey).toHaveLength(1);
   });
 
   it('lists only Gemini models that can write text', async () => {
@@ -120,7 +170,7 @@ describe('Gemini client', () => {
         },
       },
     ]);
-    const models = await createGeminiClient({ apiKey: 'k-12345678', model: 'm' }).listModels!();
+    const models = await client().listModels!();
     expect(models).toEqual([{ id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' }]);
     expect(calls[0]!.url).toContain('/v1beta/models');
     expect(calls[0]!.init.method).toBe('GET');
@@ -131,7 +181,7 @@ describe('Gemini client', () => {
       'fetch',
       vi.fn(async () => Promise.reject(new TypeError('fetch failed'))),
     );
-    const err = await createGeminiClient({ apiKey: 'k-12345678', model: 'm' })
+    const err = await client()
       .generate(request)
       .catch((e: unknown) => e);
     expect((err as AiClientError).kind).toBe('failed');
