@@ -3,6 +3,7 @@ import { CheckIcon, CopyIcon, RefreshIcon, SparklesIcon } from '../../components
 import { ErrorBanner, Notice, Skeleton, Spinner } from '../../components/ui';
 import { api, type BatchExplanation } from '../../lib/api';
 import { relativeTime } from '../../lib/format';
+import { Link } from '../../lib/router';
 import { useExplanation } from './explain';
 
 export function AiBadge({ children = 'AI explanation' }: { children?: string }) {
@@ -13,11 +14,11 @@ export function AiBadge({ children = 'AI explanation' }: { children?: string }) 
   );
 }
 
-export function AiDisclaimer() {
+export function AiDisclaimer({ provider }: { provider?: string | null }) {
   return (
     <p className="text-[11px] leading-snug text-muted">
       Written by AI from the lookup results in this batch. It can make mistakes, so check the evidence before acting. Indicators and their
-      results (not names or labels) are sent to Anthropic to write it.
+      results (not names or labels) are sent to {provider ?? 'the AI provider'} to write it.
     </p>
   );
 }
@@ -66,8 +67,11 @@ export function BatchExplainer({ batchId, terminal }: { batchId: string; termina
         <div>
           <h2 className="text-[14px] font-semibold">Plain-English explanations are off</h2>
           <p className="mt-0.5 text-[13px] text-muted">
-            An administrator can switch them on by adding an Anthropic API key (
-            <code className="font-mono text-[12px]">ANTHROPIC_API_KEY</code>) to the server settings.
+            An administrator can switch them on by adding an AI key on the{' '}
+            <Link to="/providers" className="font-semibold text-brand underline-offset-2 hover:underline">
+              Sources
+            </Link>{' '}
+            page.
           </p>
         </div>
       </section>
@@ -135,7 +139,8 @@ export function BatchExplainer({ batchId, terminal }: { batchId: string; termina
               )}
             </button>
             <span className="max-w-md text-[11px] text-muted">
-              Sends the indicators and what the services said about them to Anthropic. No names or batch labels.
+              Sends the indicators and what the services said about them to {ai.status?.providerName ?? 'the AI provider'}. No names or
+              batch labels.
             </span>
           </div>
         </div>
@@ -219,7 +224,7 @@ export function BatchExplainer({ batchId, terminal }: { batchId: string; termina
               </ul>
             </div>
           )}
-          <AiDisclaimer />
+          <AiDisclaimer provider={ai.status?.providerName} />
         </div>
       )}
     </section>

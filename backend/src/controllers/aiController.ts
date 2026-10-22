@@ -9,8 +9,8 @@ const booleanish = z.union([z.boolean(), z.enum(['true', 'false']).transform((v)
 const bodySchema = z.strictObject({ refresh: booleanish.optional() });
 const indexSchema = z.coerce.number().int().min(0);
 
-function present<T extends { generatedAt: Date }>(result: T | null, ai: AiService) {
-  return { data: result, meta: { ...ai.info } };
+async function present<T extends { generatedAt: Date }>(result: T | null, ai: AiService) {
+  return { data: result, meta: await ai.status() };
 }
 
 export function aiHandlers(service: EnrichmentService, ai: AiService) {
@@ -26,26 +26,28 @@ export function aiHandlers(service: EnrichmentService, ai: AiService) {
 
   const getBatch: RequestHandler = async (req, res) => {
     const { batch, views } = await load(req.params.id);
-    res.json(present(ai.enabled ? await ai.getBatch(batch, views) : null, ai));
+    const enabled = (await ai.status()).enabled;
+    res.json(await present(enabled ? await ai.getBatch(batch, views) : null, ai));
   };
 
   const explainBatch: RequestHandler = async (req, res) => {
     const { refresh } = bodySchema.parse(req.body ?? {});
     const { batch, views } = await load(req.params.id);
-    res.json(present(await ai.explainBatch(batch, views, req.user!, refresh), ai));
+    res.json(await present(await ai.explainBatch(batch, views, req.user!, refresh), ai));
   };
 
   const getItem: RequestHandler = async (req, res) => {
     const { batch, views } = await load(req.params.id);
     const item = find(views, req.params.index);
-    res.json(present(ai.enabled ? await ai.getItem(batch, item) : null, ai));
+    const enabled = (await ai.status()).enabled;
+    res.json(await present(enabled ? await ai.getItem(batch, item) : null, ai));
   };
 
   const explainItem: RequestHandler = async (req, res) => {
     const { refresh } = bodySchema.parse(req.body ?? {});
     const { batch, views } = await load(req.params.id);
     const item = find(views, req.params.index);
-    res.json(present(await ai.explainItem(batch, item, req.user!, refresh), ai));
+    res.json(await present(await ai.explainItem(batch, item, req.user!, refresh), ai));
   };
 
   return { getBatch, explainBatch, getItem, explainItem };

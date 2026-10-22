@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ExternalIcon, SparklesIcon } from '../components/icons';
+import { ExternalIcon } from '../components/icons';
 import { ErrorBanner, Notice, Page, Skeleton, Spinner } from '../components/ui';
+import { AiSettingsCard } from '../features/ai/AiSettingsCard';
 import { api, TYPE_LABELS, type Health, type ProviderInfo } from '../lib/api';
 import { useUser } from '../lib/auth';
 
@@ -133,26 +134,7 @@ export function ProvidersPage() {
         </div>
       )}
 
-      {ai && (
-        <section className="card flex flex-wrap items-center justify-between gap-4 p-5 text-[13px]">
-          <div className="flex items-start gap-3.5">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand">
-              <SparklesIcon size={20} />
-            </span>
-            <div>
-              <div className="text-[15px] font-semibold tracking-tight">Plain-English explanations</div>
-              <p className="mt-0.5 max-w-xl text-muted">
-                {ai.enabled
-                  ? `Written by ${ai.model}. Up to ${ai.dailyLimit} new explanations a day for the whole team; saved ones are free.`
-                  : 'Off. Add ANTHROPIC_API_KEY to the server settings to switch it on.'}
-              </p>
-            </div>
-          </div>
-          <span className={`badge ${ai.enabled ? 'bg-low-soft text-low' : 'bg-unknown-soft text-unknown'}`}>
-            {ai.enabled ? 'On' : 'Off'}
-          </span>
-        </section>
-      )}
+      <AiSettingsCard isAdmin={isAdmin} {...(ai ? { status: ai } : {})} />
 
       <p className="text-[12px] text-muted">
         Keys are set as server environment variables; after changing one, redeploy. Lookups only read existing reports: nothing is uploaded

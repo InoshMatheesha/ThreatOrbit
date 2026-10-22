@@ -70,7 +70,7 @@ function fakeAi(options: { extraIndicator?: string; reply?: (r: AiRequest) => st
 }
 
 async function setup(ai?: ReturnType<typeof fakeAi>, env: Record<string, string> = {}, text = `${BAD_IP}\n8.8.8.8`, summary?: string) {
-  const h = await enrichmentHarness(adapters(summary), env, ai?.client);
+  const h = await enrichmentHarness(adapters(summary), env, ai ? { client: ai.client } : {});
   const { agent, user } = await signedInAgent(h.app, 'analyst');
   const created = await agent.post('/api/batches').send({ text, label: 'Private incident label', acknowledgeThirdPartySharing: true });
   expect(created.status, JSON.stringify(created.body)).toBe(201);
@@ -182,7 +182,7 @@ describe('AI explanations', () => {
   it.each([
     [new AiClientError('refused', 'secret internal detail'), 502, /declined/],
     [new AiClientError('busy', 'secret internal detail'), 503, /busy/],
-    [new AiClientError('rejected_key', 'sk-ant-secret-key'), 502, /ANTHROPIC_API_KEY/],
+    [new AiClientError('rejected_key', 'sk-ant-secret-key'), 502, /key was rejected/],
     [new Error('socket hang up sk-ant-secret'), 502, /could not be reached/],
   ])('turns model failures into plain messages without leaking details (%#)', async (fail, status, message) => {
     const { agent, id } = await setup(fakeAi({ fail }));
@@ -216,12 +216,18 @@ describe('AI explanations', () => {
   });
 
   it('reports AI availability to signed-in users only', async () => {
-    const h = await enrichmentHarness(adapters(), {}, fakeAi().client);
+    const h = await enrichmentHarness(adapters(), {}, { client: fakeAi().client });
     const request = (await import('supertest')).default;
     const anon = await request(h.app).get('/api/health');
     expect(anon.body.data.ai).toBeUndefined();
     const { agent } = await signedInAgent(h.app);
     const health = await agent.get('/api/health');
-    expect(health.body.data.ai).toEqual({ enabled: true, model: 'claude-opus-5-5', dailyLimit: 100 });
+    expect(health.body.data.ai).toEqual({
+      enabled: true,
+      provider: 'anthropic',
+      providerName: 'Anthropic Claude',
+      model: 'claude-opus-5-5',
+      dailyLimit: 100,
+    });
   });
 });

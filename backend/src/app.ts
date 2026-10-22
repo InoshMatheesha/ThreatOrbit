@@ -14,6 +14,7 @@ import { authRouter, usersRouter } from './routes/auth.js';
 import { batchesRouter } from './routes/batches.js';
 import { enrichmentRouter } from './routes/enrichment.js';
 import { healthRouter } from './routes/health.js';
+import { settingsRouter } from './routes/settings.js';
 import { AiService } from './services/aiService.js';
 import type { AuthService } from './services/authService.js';
 import type { EnrichmentService } from './services/enrichmentService.js';
@@ -65,6 +66,7 @@ export function createApp(config: AppConfig, logger: Logger = createLogger(confi
     app.use('/api/auth', authRouter(config, auth));
     app.use('/api', requireAuth);
     app.use('/api/users', usersRouter(logger));
+    if (ai) app.use('/api/settings', settingsRouter(ai));
   }
   if (enrichment) app.post('/api/queue/tick', queueHandlers(config, enrichment).tick);
   app.use('/api/batches', batchesRouter(config, enrichment, ai));

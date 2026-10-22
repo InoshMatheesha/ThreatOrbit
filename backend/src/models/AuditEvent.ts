@@ -12,6 +12,8 @@ export const AUDIT_ACTIONS = [
   'retention.purge',
   'provider.test',
   'ai.explain',
+  'settings.ai_update',
+  'settings.ai_remove',
   'auth.login',
   'auth.login_failed',
   'auth.logout',

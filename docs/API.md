@@ -99,7 +99,7 @@ The public liveness probe. Signed-out callers get only `{ status, service }`; si
 {
   "data": {
     "status": "ok",
-    "ai": { "enabled": true, "model": "claude-opus-5-5", "dailyLimit": 100 },
+    "ai": { "enabled": true, "provider": "gemini", "providerName": "Google Gemini", "model": "gemini-2.5-flash", "dailyLimit": 100 },
     "enrichment": {
       "database": { "connected": true, "mode": "external" },
       "queue": { "mode": "bullmq" },
@@ -240,7 +240,7 @@ Deletes all history: every batch, result and stored indicator. The body must be 
 
 ## Plain-English explanations
 
-Written by an AI model from the lookup results. They are optional: without `ANTHROPIC_API_KEY` the feature is off, the `GET` endpoints return `data: null` with `meta.enabled: false`, and the `POST` endpoints return `AI_NOT_CONFIGURED`.
+Written by an AI model (Google Gemini or Anthropic Claude) from the lookup results. They are optional: until an administrator adds an AI key (see [AI settings](#ai-settings)) the feature is off, the `GET` endpoints return `data: null` with `meta.enabled: false`, and the `POST` endpoints return `AI_NOT_CONFIGURED`.
 
 What is sent to the model: the indicator values and, for each source, its verdict, summary, tags and a few details, plus ThreatOrbit's risk level and reasons. Batch labels, user names and email addresses are never sent. Everything from outside services is passed as quoted data, and the model's reply is checked against a schema; indicators it was not given are dropped.
 
@@ -248,7 +248,7 @@ Explanations are stored with a fingerprint of the evidence they were written fro
 
 ### `GET /api/batches/:id/explanation`
 
-The saved batch summary, or `null`. `meta` is `{ enabled, model, dailyLimit }`.
+The saved batch summary, or `null`. `meta` is `{ enabled, provider, providerName, model, dailyLimit }`.
 
 ### `POST /api/batches/:id/explanation`
 
@@ -264,12 +264,12 @@ Body `{ "refresh": false }`. Returns the saved summary when it is still current,
       "nextSteps": ["..."],
       "indicators": [{ "value": "185.220.101.4", "headline": "...", "explanation": "...", "nextSteps": ["..."] }]
     },
-    "model": "claude-opus-5-5",
+    "model": "gemini-2.5-flash",
     "generatedAt": "2026-10-22T09:30:00.000Z",
     "stale": false,
     "cached": false
   },
-  "meta": { "enabled": true, "model": "claude-opus-5-5", "dailyLimit": 100 }
+  "meta": { "enabled": true, "provider": "gemini", "providerName": "Google Gemini", "model": "gemini-2.5-flash", "dailyLimit": 100 }
 }
 ```
 
@@ -278,6 +278,43 @@ Body `{ "refresh": false }`. Returns the saved summary when it is still current,
 ### `GET|POST /api/batches/:id/items/:index/explanation`
 
 The same, for one indicator (any risk level, including kept-local ones). `explanation` is `{ headline, whatIsIt, whyItMatters, confidence: "low" | "medium" | "high", nextSteps[] }`.
+
+---
+
+## AI settings
+
+Administrator only. The key is stored in the database and is never returned: responses show only its last four characters.
+
+### `GET /api/settings/ai`
+
+```json
+{
+  "data": {
+    "configured": true,
+    "source": "database",
+    "provider": "gemini",
+    "model": "gemini-2.5-flash",
+    "keyHint": "...9876",
+    "updatedAt": "2026-10-22T09:30:00.000Z",
+    "updatedBy": "Ada Admin",
+    "providers": [{ "id": "gemini", "name": "Google Gemini", "defaultModel": "gemini-2.5-flash", "signupUrl": "https://aistudio.google.com/apikey" }]
+  }
+}
+```
+
+`source` is `database` (saved here), `environment` (the `ANTHROPIC_API_KEY` fallback) or `null`. A key saved here wins over the environment variable.
+
+### `PUT /api/settings/ai`
+
+Body `{ "provider": "gemini" | "anthropic", "apiKey"?: string, "model"?: string }`. The key is checked against the provider first and nothing is saved if it is rejected. Without `model`, the newest stable Gemini Flash model the key can use is chosen. Without `apiKey`, the saved key for the same provider is kept (to change only the model). Returns the same shape as `GET`.
+
+### `DELETE /api/settings/ai`
+
+Removes the saved key and returns the new state. The environment fallback, if set, takes over.
+
+### `GET /api/settings/ai/models`
+
+The models the current key can use: `[{ "id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash" }]`.
 
 ---
 
@@ -292,4 +329,4 @@ Downloads the batch as an attachment. Every export is recorded in the audit log.
 
 ### `GET /api/audit?limit=100` *(admin)*
 
-Recent audit events. Each event has `{ at, action, actor { id, email, name } | null, batchId?, details }`. Actions include sign-ins and failed sign-ins, AI explanations (scope and model only), password changes, user changes, batch create/cancel/retry/delete, exports and provider key tests. The details never contain indicator values or secrets.
+Recent audit events. Each event has `{ at, action, actor { id, email, name } | null, batchId?, details }`. Actions include sign-ins and failed sign-ins, AI explanations (scope and model only), AI setting changes (provider and model, never the key), password changes, user changes, batch create/cancel/retry/delete, exports and provider key tests. The details never contain indicator values or secrets.

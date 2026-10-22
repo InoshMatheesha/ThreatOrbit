@@ -18,6 +18,8 @@ const ACTION_LABELS: Record<string, string> = {
   'retention.purge': 'Retention purge',
   'provider.test': 'Provider key tested',
   'ai.explain': 'AI explanation written',
+  'settings.ai_update': 'AI settings changed',
+  'settings.ai_remove': 'AI key removed',
   'auth.login': 'Signed in',
   'auth.login_failed': 'Failed sign-in',
   'auth.logout': 'Signed out',

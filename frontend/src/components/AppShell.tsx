@@ -13,7 +13,7 @@ function useNav() {
   return [
     { to: '/', label: 'Investigate', Icon: ScanIcon, active: path === '/' },
     { to: '/batches', label: 'Batches', Icon: LayersIcon, active: path.startsWith('/batches') },
-    { to: '/providers', label: 'Providers', Icon: ServerIcon, active: path.startsWith('/providers') },
+    { to: '/providers', label: 'Sources', Icon: ServerIcon, active: path.startsWith('/providers') },
     ...(user.role === 'admin' ? [{ to: '/users', label: 'Team', Icon: UsersIcon, active: path.startsWith('/users') }] : []),
   ];
 }

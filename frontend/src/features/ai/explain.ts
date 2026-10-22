@@ -9,9 +9,10 @@ interface Source<T> {
 
 /** Loads the saved explanation, and generates a new one on request. */
 export function useExplanation<T>(source: Source<T>, deps: unknown[]) {
-  const [state, setState] = useState<{ loading: boolean; enabled: boolean; data: Explained<T> | null }>({
+  const [state, setState] = useState<{ loading: boolean; enabled: boolean; status: AiStatus | null; data: Explained<T> | null }>({
     loading: true,
     enabled: false,
+    status: null,
     data: null,
   });
   const [busy, setBusy] = useState(false);
@@ -23,8 +24,8 @@ export function useExplanation<T>(source: Source<T>, deps: unknown[]) {
     setState((s) => (s.data ? s : { ...s, loading: true }));
     source
       .load()
-      .then((r) => !cancelled && setState({ loading: false, enabled: r.meta.enabled, data: r.data }))
-      .catch(() => !cancelled && setState({ loading: false, enabled: false, data: null }));
+      .then((r) => !cancelled && setState({ loading: false, enabled: r.meta.enabled, status: r.meta, data: r.data }))
+      .catch(() => !cancelled && setState({ loading: false, enabled: false, status: null, data: null }));
     return () => {
       cancelled = true;
     };

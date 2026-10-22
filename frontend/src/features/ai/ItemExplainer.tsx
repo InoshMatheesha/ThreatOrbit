@@ -80,7 +80,7 @@ export function ItemExplainer({ batchId, index }: { batchId: string; index: numb
             </div>
           )}
           <p className="text-[12px] text-muted">{CONFIDENCE[x.confidence]}</p>
-          <AiDisclaimer />
+          <AiDisclaimer provider={ai.status?.providerName} />
         </div>
       )}
     </section>

@@ -16,7 +16,7 @@ export interface HealthInfo {
 /** Public liveness probe (used by the host). Internal details only for signed-in users. */
 export function healthRouter(info: HealthInfo = {}): Router {
   const router = Router();
-  router.get('/', (req, res) => {
+  router.get('/', async (req, res) => {
     const dbConnected = mongoose.connection.readyState === 1;
     const status = info.service && !dbConnected ? 'degraded' : 'ok';
     if (!req.user) {
@@ -29,7 +29,7 @@ export function healthRouter(info: HealthInfo = {}): Router {
         service: 'threatorbit',
         uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
         time: new Date().toISOString(),
-        ...(info.ai ? { ai: info.ai.info } : {}),
+        ...(info.ai ? { ai: await info.ai.status() } : {}),
         enrichment: info.service
           ? {
               database: { connected: dbConnected, mode: info.databaseMode ?? 'external' },
