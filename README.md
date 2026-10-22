@@ -232,6 +232,8 @@ All settings are environment variables. [`backend/.env.example`](backend/.env.ex
 | AlienVault OTX | IPv4, IPv6, domain, URL, MD5, SHA-1, SHA-256 | 30 per minute | [otx.alienvault.com](https://otx.alienvault.com/api) |
 | URLhaus | URL, domain, IPv4, MD5, SHA-256 | 30 per minute | [auth.abuse.ch](https://auth.abuse.ch/) |
 
+For results VirusTotal marks malicious, the detail view also shows whether the Sophos engine detected it, read from the engine list VirusTotal already returns (no extra request).
+
 A provider without a key is shown as unconfigured and is never called.
 
 ## Risk model

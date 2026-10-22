@@ -22,6 +22,21 @@ function pathFor(type: string, value: string): { api: string; gui: string } {
   }
 }
 
+/**
+ * What the Sophos engine said, read from the engine list VirusTotal already returns (no extra request).
+ * Shown only for malicious results, where "did Sophos catch it?" is the follow-up question.
+ */
+export function sophosVerdict(results: unknown): string {
+  const engines = Object.entries(obj(results));
+  const entry = engines.find(([name]) => name.toLowerCase() === 'sophos') ?? engines.find(([name]) => /^sophos/i.test(name));
+  if (!entry) return 'Sophos did not scan this';
+  const { category, result } = obj(entry[1]);
+  if (category === 'malicious' || category === 'suspicious')
+    return typeof result === 'string' && result ? `Detected: ${result}` : 'Detected';
+  if (category === 'harmless' || category === 'undetected') return 'Not detected';
+  return 'Sophos gave no result';
+}
+
 export const virusTotal: ProviderAdapter = {
   id: 'virustotal',
   name: 'VirusTotal',
@@ -73,6 +88,7 @@ export const virusTotal: ProviderAdapter = {
       summary,
       detections: d,
       metrics: compact({
+        sophos: verdict === 'malicious' ? sophosVerdict(attrs.last_analysis_results) : null,
         reputation: typeof attrs.reputation === 'number' ? attrs.reputation : null,
         lastAnalysis: unixToIso(attrs.last_analysis_date),
         country: str(attrs.country),

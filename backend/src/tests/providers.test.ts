@@ -3,7 +3,7 @@ import { loadConfig } from '../config/env.js';
 import { abuseIpdb } from '../providers/adapters/abuseipdb.js';
 import { alienVaultOtx } from '../providers/adapters/otx.js';
 import { urlhaus } from '../providers/adapters/urlhaus.js';
-import { virusTotal, vtUrlId } from '../providers/adapters/virustotal.js';
+import { sophosVerdict, virusTotal, vtUrlId } from '../providers/adapters/virustotal.js';
 import { createProviderHttp, type FetchLike } from '../providers/http.js';
 import { ProviderRegistry } from '../providers/registry.js';
 import { ProviderError, type ProviderAdapter } from '../providers/types.js';
@@ -97,6 +97,48 @@ describe('provider HTTP client', () => {
 });
 
 describe('VirusTotal adapter', () => {
+  const vtBody = (stats: Record<string, number>, results?: Record<string, unknown>) =>
+    jsonResponse(200, {
+      data: { id: 'x', attributes: { last_analysis_stats: stats, ...(results ? { last_analysis_results: results } : {}) } },
+    });
+  const MAL = { malicious: 9, suspicious: 0, harmless: 50, undetected: 31 };
+
+  it('reports whether Sophos detected a malicious result, without any extra request', async () => {
+    const detected = harness(virusTotal, () =>
+      vtBody(MAL, { Sophos: { category: 'malicious', result: 'Mal/Generic-S' }, Kaspersky: { category: 'malicious', result: 'x' } }),
+    );
+    expect((await detected.lookup('45.33.32.156', 'ipv4')).metrics.sophos).toBe('Detected: Mal/Generic-S');
+    expect(detected.calls).toHaveLength(1);
+
+    const missed = harness(virusTotal, () =>
+      vtBody(MAL, { Sophos: { category: 'undetected', result: null }, Kaspersky: { category: 'malicious', result: 'x' } }),
+    );
+    expect((await missed.lookup('45.33.32.156', 'ipv4')).metrics.sophos).toBe('Not detected');
+
+    const absent = harness(virusTotal, () => vtBody(MAL, { Kaspersky: { category: 'malicious', result: 'x' } }));
+    expect((await absent.lookup('45.33.32.156', 'ipv4')).metrics.sophos).toBe('Sophos did not scan this');
+  });
+
+  it('only looks at Sophos when the result is malicious', async () => {
+    const results = { Sophos: { category: 'malicious', result: 'Mal/Generic-S' } };
+    for (const stats of [
+      { malicious: 1, suspicious: 0, harmless: 60, undetected: 30 },
+      { malicious: 0, suspicious: 0, harmless: 60, undetected: 30 },
+    ]) {
+      const h = harness(virusTotal, () => vtBody(stats, results));
+      expect((await h.lookup('8.8.8.8', 'ipv4')).metrics).not.toHaveProperty('sophos');
+    }
+  });
+
+  it('understands the different ways Sophos can answer', () => {
+    expect(sophosVerdict({ sophos: { category: 'harmless' } })).toBe('Not detected');
+    expect(sophosVerdict({ SophosHome: { category: 'suspicious', result: 'ML/PE-A' } })).toBe('Detected: ML/PE-A');
+    expect(sophosVerdict({ Sophos: { category: 'malicious' } })).toBe('Detected');
+    expect(sophosVerdict({ Sophos: { category: 'timeout' } })).toBe('Sophos gave no result');
+    expect(sophosVerdict({ Sophos: { category: 'type-unsupported' } })).toBe('Sophos gave no result');
+    expect(sophosVerdict(undefined)).toBe('Sophos did not scan this');
+  });
+
   it('parses detections and builds a permalink (GET only, key in header)', async () => {
     const { lookup, calls } = harness(virusTotal, () =>
       jsonResponse(200, {
