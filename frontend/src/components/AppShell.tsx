@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { useUser } from '../lib/auth';
 import { Link, usePath } from '../lib/router';
 import { ApiStatus } from './ApiStatus';
-import { LayersIcon, ScanIcon, ServerIcon, UsersIcon } from './icons';
+import { LayersIcon, PulseIcon, ScanIcon, ServerIcon, UsersIcon } from './icons';
 import { ThemeToggle } from './ThemeToggle';
 import { Logo } from './ui';
 import { UserMenu } from './UserMenu';
@@ -14,7 +14,12 @@ function useNav() {
     { to: '/', label: 'Investigate', Icon: ScanIcon, active: path === '/' },
     { to: '/batches', label: 'Batches', Icon: LayersIcon, active: path.startsWith('/batches') },
     { to: '/providers', label: 'Sources', Icon: ServerIcon, active: path.startsWith('/providers') },
-    ...(user.role === 'admin' ? [{ to: '/users', label: 'Team', Icon: UsersIcon, active: path.startsWith('/users') }] : []),
+    ...(user.role === 'admin'
+      ? [
+          { to: '/activity', label: 'Activity', Icon: PulseIcon, active: path.startsWith('/activity') },
+          { to: '/users', label: 'Team', Icon: UsersIcon, active: path.startsWith('/users') },
+        ]
+      : []),
   ];
 }
 
