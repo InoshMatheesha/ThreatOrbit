@@ -139,3 +139,10 @@ export const ClockIcon = icon(
     <path d="M12 7v5l3 2" />
   </>,
 );
+export const PencilIcon = icon(
+  <>
+    <path d="M4 20h4L19 9a2.1 2.1 0 0 0-4-4L4 16v4Z" />
+    <path d="m13.5 6.5 4 4" />
+  </>,
+);
+export const ShieldIcon = icon(<path d="M12 3 4.5 6v5.5c0 4.5 3 7.8 7.5 9.5 4.5-1.7 7.5-5 7.5-9.5V6L12 3Z" />);
