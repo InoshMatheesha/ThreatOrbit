@@ -5,6 +5,7 @@ import type { AppConfig, ProviderId } from '../config/env.js';
 import type { RiskRules } from '../config/riskRules.js';
 import { ApiError } from '../lib/errors.js';
 import {
+  AiExplanation,
   AuditEvent,
   Batch,
   EnrichmentResult,
@@ -320,6 +321,7 @@ export class EnrichmentService {
     await this.requireBatch(batchId, actor);
     await this.deps.queue.cancelBatch(batchId);
     const { deletedCount } = await EnrichmentResult.deleteMany({ batchId });
+    await AiExplanation.deleteMany({ batchId });
     await Batch.deleteOne({ _id: batchId });
     await audit(this.deps.logger, 'batch.delete', actor, batchId, { lookupsDeleted: deletedCount });
   }
@@ -331,6 +333,7 @@ export class EnrichmentService {
       Batch.deleteMany({}),
       EnrichmentResult.deleteMany({}),
       Indicator.deleteMany({}),
+      AiExplanation.deleteMany({}),
     ]);
     await audit(this.deps.logger, 'history.delete_all', actor, undefined, {
       batches: batches.deletedCount,
@@ -537,6 +540,7 @@ export class EnrichmentService {
         Indicator.deleteMany({ lastSeenAt: { $lt: cutoff } }),
         AuditEvent.deleteMany({ at: { $lt: new Date(now.getTime() - auditDays * 86_400_000) } }),
         ProviderUsage.deleteMany({ day: { $lt: new Date(now.getTime() - 7 * 86_400_000).toISOString().slice(0, 10) } }),
+        AiExplanation.deleteMany({ $or: [{ batchId: { $in: ids } }, { createdAt: { $lt: cutoff } }] }),
       ]);
       if (batches.deletedCount || results.deletedCount || indicators.deletedCount) {
         await audit(this.deps.logger, 'retention.purge', null, undefined, {

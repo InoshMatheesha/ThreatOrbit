@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, type Health } from '../lib/api';
 
 /** Small service indicator. Development fallbacks are surfaced as a warning. */
-export function ApiStatus() {
+export function ApiStatus({ compact = false }: { compact?: boolean }) {
   const [health, setHealth] = useState<Health | null | 'down'>(null);
 
   useEffect(() => {
@@ -21,24 +21,28 @@ export function ApiStatus() {
   }, []);
 
   if (health === null) return null;
-  if (health === 'down') return <Dot color="bg-red-500" label="Service unavailable" />;
+  if (health === 'down') return <Dot color="bg-high" label="Service unavailable" compact={compact} />;
   const e = health.enrichment;
-  if (e && !e.database.connected) return <Dot color="bg-red-500" label="Database offline" />;
+  if (e && !e.database.connected) return <Dot color="bg-high" label="Database offline" compact={compact} />;
   const fallback = e && (e.database.mode === 'embedded' || e.queue.mode === 'memory');
   return (
     <Dot
-      color={fallback ? 'bg-amber-500' : 'bg-emerald-500'}
-      label="Operational"
-      title={fallback ? 'Running on development fallbacks (embedded database or in-process queue)' : 'All systems operational'}
+      color={fallback ? 'bg-medium' : 'bg-low'}
+      label={fallback ? 'Development mode' : 'All systems operational'}
+      title={fallback ? 'Running on development fallbacks (embedded database or in-process queue)' : undefined}
+      compact={compact}
     />
   );
 }
 
-function Dot({ color, label, title }: { color: string; label: string; title?: string }) {
+function Dot({ color, label, title, compact }: { color: string; label: string; title?: string; compact: boolean }) {
   return (
-    <span className="hidden items-center gap-1.5 text-xs text-slate-500 md:inline-flex dark:text-slate-400" title={title}>
-      <span className={`h-2 w-2 rounded-full ${color}`} aria-hidden />
-      {label}
+    <span className="inline-flex items-center gap-2 text-[12px] text-muted" title={title ?? label}>
+      <span className="relative flex h-2 w-2" aria-hidden>
+        <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-50 ${color}`} />
+        <span className={`relative inline-flex h-2 w-2 rounded-full ${color}`} />
+      </span>
+      {compact ? <span className="sr-only">{label}</span> : label}
     </span>
   );
 }

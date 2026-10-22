@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Empty, ErrorBanner, Notice, Panel, Spinner } from '../components/ui';
+import { ExternalIcon, SparklesIcon } from '../components/icons';
+import { ErrorBanner, Notice, Page, Skeleton, Spinner } from '../components/ui';
 import { api, TYPE_LABELS, type Health, type ProviderInfo } from '../lib/api';
 import { useUser } from '../lib/auth';
 
 const STATE_STYLES = {
-  ready: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  unconfigured: 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
-  disabled: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
+  ready: 'bg-low-soft text-low',
+  unconfigured: 'bg-unknown-soft text-unknown',
+  disabled: 'bg-medium-soft text-medium',
 };
 
 function ProviderCard({ p, canTest }: { p: ProviderInfo; canTest: boolean }) {
@@ -26,38 +27,38 @@ function ProviderCard({ p, canTest }: { p: ProviderInfo; canTest: boolean }) {
   }
 
   return (
-    <div className="rounded-md border border-slate-200 bg-white p-3 text-xs dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold">{p.name}</span>
+    <div className="card flex flex-col p-5 text-[13px]">
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-[16px] font-semibold tracking-tight">{p.name}</span>
         <span className={`badge ${STATE_STYLES[p.state]}`}>
           {p.state === 'ready' ? 'Ready' : p.state === 'unconfigured' ? 'No API key' : 'Disabled'}
         </span>
       </div>
-      <p className="mt-1 text-slate-600 dark:text-slate-300">{p.description}</p>
-      <div className="mt-2 flex flex-wrap gap-1">
+      <p className="mt-1.5 text-muted">{p.description}</p>
+      <div className="mt-3 flex flex-wrap gap-1.5">
         {p.supports.map((t) => (
-          <span key={t} className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] dark:bg-slate-800">
+          <span key={t} className="chip bg-raised ring-1 ring-line">
             {TYPE_LABELS[t]}
           </span>
         ))}
       </div>
-      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-slate-600 dark:text-slate-300">
-        <dt className="text-slate-500">Rate limit</dt>
+      <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+        <dt className="text-muted">Rate limit</dt>
         <dd>
           {p.limits.requestsPerMinute}/min, {p.limits.concurrency} at a time
         </dd>
-        <dt className="text-slate-500">Daily quota</dt>
+        <dt className="text-muted">Daily quota</dt>
         <dd>{p.limits.dailyLimit === null ? 'none enforced locally' : `${p.usedToday} of ${p.limits.dailyLimit} used today (UTC)`}</dd>
         {p.credentialEnv && (
           <>
-            <dt className="text-slate-500">Key setting</dt>
+            <dt className="text-muted">Key setting</dt>
             <dd>
-              <code>{p.credentialEnv}</code>
+              <code className="font-mono text-[12px]">{p.credentialEnv}</code>
             </dd>
           </>
         )}
       </dl>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
+      <div className="mt-auto flex flex-wrap items-center gap-3 pt-4">
         {p.state === 'ready' && canTest && (
           <button type="button" className="btn" onClick={test} disabled={testing}>
             {testing ? (
@@ -70,16 +71,17 @@ function ProviderCard({ p, canTest }: { p: ProviderInfo; canTest: boolean }) {
           </button>
         )}
         {p.state === 'unconfigured' && p.signupUrl && (
-          <a className="text-sky-700 underline dark:text-sky-400" href={p.signupUrl} target="_blank" rel="noopener noreferrer">
-            Get a free API key ↗
+          <a
+            className="inline-flex items-center gap-1 font-medium text-brand underline-offset-2 hover:underline"
+            href={p.signupUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Get a free API key <ExternalIcon size={13} />
           </a>
         )}
       </div>
-      {result && (
-        <div className={`mt-2 ${result.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
-          {result.message}
-        </div>
-      )}
+      {result && <div className={`mt-3 ${result.ok ? 'text-low' : 'text-high'}`}>{result.message}</div>}
     </div>
   );
 }
@@ -101,12 +103,9 @@ export function ProvidersPage() {
   }, []);
 
   const e = health?.enrichment;
+  const ai = health?.ai;
   return (
-    <main className="mx-auto max-w-[1400px] space-y-3 px-4 py-4">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-base font-semibold">Threat intel providers</h1>
-        <span className="text-xs text-slate-500">API keys are held by the server and never sent to the browser</span>
-      </div>
+    <Page title="Sources" subtitle="The services ThreatOrbit asks. API keys are held by the server and are never sent to the browser.">
       {error && <ErrorBanner>{error}</ErrorBanner>}
       {isAdmin && e && (e.database.mode === 'embedded' || e.queue.mode === 'memory') && (
         <Notice tone="warn">
@@ -120,23 +119,45 @@ export function ProvidersPage() {
           . Configure MONGODB_URI (and optionally REDIS_URL) for production.
         </Notice>
       )}
-      <Panel title="Providers">
-        {providers === null ? (
-          <Empty>
-            <Spinner /> Loading…
-          </Empty>
-        ) : (
-          <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
-            {providers.map((p) => (
-              <ProviderCard key={p.id} p={p} canTest={isAdmin} />
-            ))}
+      {providers === null ? (
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-60 w-full !rounded-2xl" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {providers.map((p) => (
+            <ProviderCard key={p.id} p={p} canTest={isAdmin} />
+          ))}
+        </div>
+      )}
+
+      {ai && (
+        <section className="card flex flex-wrap items-center justify-between gap-4 p-5 text-[13px]">
+          <div className="flex items-start gap-3.5">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand">
+              <SparklesIcon size={20} />
+            </span>
+            <div>
+              <div className="text-[15px] font-semibold tracking-tight">Plain-English explanations</div>
+              <p className="mt-0.5 max-w-xl text-muted">
+                {ai.enabled
+                  ? `Written by ${ai.model}. Up to ${ai.dailyLimit} new explanations a day for the whole team; saved ones are free.`
+                  : 'Off. Add ANTHROPIC_API_KEY to the server settings to switch it on.'}
+              </p>
+            </div>
           </div>
-        )}
-      </Panel>
-      <p className="text-xs text-slate-500">
-        Keys are set as server environment variables; after changing one, restart (redeploy) the backend. Lookups only read existing
-        reports: nothing is uploaded or submitted for new analysis.
+          <span className={`badge ${ai.enabled ? 'bg-low-soft text-low' : 'bg-unknown-soft text-unknown'}`}>
+            {ai.enabled ? 'On' : 'Off'}
+          </span>
+        </section>
+      )}
+
+      <p className="text-[12px] text-muted">
+        Keys are set as server environment variables; after changing one, redeploy. Lookups only read existing reports: nothing is uploaded
+        or submitted for new analysis.
       </p>
-    </main>
+    </Page>
   );
 }

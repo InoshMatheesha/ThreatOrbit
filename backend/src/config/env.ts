@@ -73,6 +73,12 @@ const envSchema = z.object({
   OTX_API_KEY: optionalSecret,
   URLHAUS_AUTH_KEY: optionalSecret,
 
+  /** Plain-English explanations. Optional: without a key the feature is simply off. */
+  ANTHROPIC_API_KEY: optionalSecret,
+  AI_MODEL: z.string().trim().min(1).default('claude-opus-5-5'),
+  /** Explanations generated per UTC day across the whole team (cached ones are free). */
+  AI_DAILY_LIMIT: z.coerce.number().int().min(1).default(100),
+
   VIRUSTOTAL_REQUESTS_PER_MINUTE: optionalPositiveInt,
   VIRUSTOTAL_DAILY_LIMIT: optionalPositiveInt,
   ABUSEIPDB_REQUESTS_PER_MINUTE: optionalPositiveInt,
@@ -118,6 +124,7 @@ export type AppConfig = {
     riskRulesPath?: string;
   };
   retention: { days: number; auditDays: number };
+  ai: { apiKey: string | null; model: string; dailyLimit: number };
   providers: Record<ProviderId, ProviderSettings>;
 };
 
@@ -185,6 +192,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       ...(e.RISK_RULES_PATH ? { riskRulesPath: e.RISK_RULES_PATH } : {}),
     },
     retention: { days: e.RETENTION_DAYS, auditDays: e.AUDIT_RETENTION_DAYS },
+    ai: { apiKey: e.ANTHROPIC_API_KEY, model: e.AI_MODEL, dailyLimit: e.AI_DAILY_LIMIT },
     providers: {
       virustotal: provider('virustotal', e.VIRUSTOTAL_API_KEY, e.VIRUSTOTAL_REQUESTS_PER_MINUTE, e.VIRUSTOTAL_DAILY_LIMIT),
       abuseipdb: provider('abuseipdb', e.ABUSEIPDB_API_KEY, e.ABUSEIPDB_REQUESTS_PER_MINUTE, e.ABUSEIPDB_DAILY_LIMIT),

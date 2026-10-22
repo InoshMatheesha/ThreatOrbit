@@ -11,6 +11,7 @@ export const AUDIT_ACTIONS = [
   'history.delete_all',
   'retention.purge',
   'provider.test',
+  'ai.explain',
   'auth.login',
   'auth.login_failed',
   'auth.logout',

@@ -38,6 +38,9 @@ Successful responses wrap their payload in `data` (lists also include `meta`). E
 | `UNSUPPORTED_FILE_TYPE` | 415 | Not a `.txt`/`.csv` file. |
 | `RATE_LIMITED` | 429 | Too many API requests or sign-in attempts, or a provider key test repeated within 15 s. |
 | `DATABASE_UNAVAILABLE` | 503 | Enrichment endpoints while the database is not connected. |
+| `AI_NOT_CONFIGURED` | 503 | An explanation was requested but `ANTHROPIC_API_KEY` is not set. |
+| `AI_LIMIT_REACHED` | 429 | The team's `AI_DAILY_LIMIT` of new explanations is used up for today (UTC). |
+| `AI_UNAVAILABLE` | 502 / 503 | The AI declined, was busy, was unreachable, rejected the key, or gave an unreadable answer. The message says which, in plain words. |
 | `INTERNAL_ERROR` | 500 | Unexpected failure. No internals are leaked. |
 
 ---
@@ -96,6 +99,7 @@ The public liveness probe. Signed-out callers get only `{ status, service }`; si
 {
   "data": {
     "status": "ok",
+    "ai": { "enabled": true, "model": "claude-opus-5-5", "dailyLimit": 100 },
     "enrichment": {
       "database": { "connected": true, "mode": "external" },
       "queue": { "mode": "bullmq" },
@@ -234,6 +238,49 @@ Deletes all history: every batch, result and stored indicator. The body must be 
 
 ---
 
+## Plain-English explanations
+
+Written by an AI model from the lookup results. They are optional: without `ANTHROPIC_API_KEY` the feature is off, the `GET` endpoints return `data: null` with `meta.enabled: false`, and the `POST` endpoints return `AI_NOT_CONFIGURED`.
+
+What is sent to the model: the indicator values and, for each source, its verdict, summary, tags and a few details, plus ThreatOrbit's risk level and reasons. Batch labels, user names and email addresses are never sent. Everything from outside services is passed as quoted data, and the model's reply is checked against a schema; indicators it was not given are dropped.
+
+Explanations are stored with a fingerprint of the evidence they were written from. If lookups change afterwards, `stale` is `true` and a new one can be requested. New explanations count against `AI_DAILY_LIMIT`; saved ones are free.
+
+### `GET /api/batches/:id/explanation`
+
+The saved batch summary, or `null`. `meta` is `{ enabled, model, dailyLimit }`.
+
+### `POST /api/batches/:id/explanation`
+
+Body `{ "refresh": false }`. Returns the saved summary when it is still current, otherwise writes a new one.
+
+```json
+{
+  "data": {
+    "explanation": {
+      "headline": "Four addresses and one link look dangerous",
+      "overview": "...",
+      "keyPoints": ["..."],
+      "nextSteps": ["..."],
+      "indicators": [{ "value": "185.220.101.4", "headline": "...", "explanation": "...", "nextSteps": ["..."] }]
+    },
+    "model": "claude-opus-5-5",
+    "generatedAt": "2026-10-22T09:30:00.000Z",
+    "stale": false,
+    "cached": false
+  },
+  "meta": { "enabled": true, "model": "claude-opus-5-5", "dailyLimit": 100 }
+}
+```
+
+`indicators` covers up to ten High and Medium risk items, most serious first.
+
+### `GET|POST /api/batches/:id/items/:index/explanation`
+
+The same, for one indicator (any risk level, including kept-local ones). `explanation` is `{ headline, whatIsIt, whyItMatters, confidence: "low" | "medium" | "high", nextSteps[] }`.
+
+---
+
 ## Exports and audit
 
 ### `GET /api/exports/:batchId?format=csv|json`
@@ -245,4 +292,4 @@ Downloads the batch as an attachment. Every export is recorded in the audit log.
 
 ### `GET /api/audit?limit=100` *(admin)*
 
-Recent audit events. Each event has `{ at, action, actor { id, email, name } | null, batchId?, details }`. Actions include sign-ins and failed sign-ins, password changes, user changes, batch create/cancel/retry/delete, exports and provider key tests. The details never contain indicator values or secrets.
+Recent audit events. Each event has `{ at, action, actor { id, email, name } | null, batchId?, details }`. Actions include sign-ins and failed sign-ins, AI explanations (scope and model only), password changes, user changes, batch create/cancel/retry/delete, exports and provider key tests. The details never contain indicator values or secrets.

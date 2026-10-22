@@ -1,33 +1,243 @@
 @import 'tailwindcss';
 
-@theme {
-  --font-mono: ui-monospace, 'SFMono-Regular', 'Cascadia Mono', Consolas, monospace;
+/* Colours are CSS variables so light and dark share one set of class names. */
+:root {
+  color-scheme: light;
+  --c-canvas: #f2f5fb;
+  --c-surface: #ffffff;
+  --c-raised: #f6f8fd;
+  --c-line: #e0e6f1;
+  --c-line-strong: #c9d3e5;
+  --c-ink: #0b1324;
+  --c-muted: #5b6985;
+  --c-brand: #1573e8;
+  --c-brand-soft: #e6f0ff;
+  --c-accent: #08b4d4;
+  --c-high: #d92d3a;
+  --c-high-soft: #fdecee;
+  --c-medium: #b86e00;
+  --c-medium-soft: #fff3dd;
+  --c-low: #0f8a5f;
+  --c-low-soft: #e2f6ee;
+  --c-unknown: #5b6985;
+  --c-unknown-soft: #e8edf6;
+  --c-glow: rgba(21, 115, 232, 0.1);
+  --shadow-card: 0 1px 2px rgba(11, 19, 36, 0.05), 0 8px 24px -12px rgba(11, 19, 36, 0.12);
+}
+:root.dark {
+  color-scheme: dark;
+  --c-canvas: #060a13;
+  --c-surface: #0d1422;
+  --c-raised: #121b2d;
+  --c-line: #1d2a44;
+  --c-line-strong: #2b3b5c;
+  --c-ink: #e8eefb;
+  --c-muted: #8d9cba;
+  --c-brand: #3d95ff;
+  --c-brand-soft: rgba(61, 149, 255, 0.14);
+  --c-accent: #2fd4ee;
+  --c-high: #ff6b78;
+  --c-high-soft: rgba(255, 107, 120, 0.14);
+  --c-medium: #f5b04a;
+  --c-medium-soft: rgba(245, 176, 74, 0.14);
+  --c-low: #3ccf9a;
+  --c-low-soft: rgba(60, 207, 154, 0.13);
+  --c-unknown: #9aa8c4;
+  --c-unknown-soft: rgba(154, 168, 196, 0.14);
+  --c-glow: rgba(61, 149, 255, 0.14);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 12px 32px -16px rgba(0, 0, 0, 0.7);
+}
+
+@theme inline {
+  --font-sans:
+    'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, 'Inter', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-mono: 'Cascadia Code', 'Cascadia Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  --color-canvas: var(--c-canvas);
+  --color-surface: var(--c-surface);
+  --color-raised: var(--c-raised);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-ink: var(--c-ink);
+  --color-muted: var(--c-muted);
+  --color-brand: var(--c-brand);
+  --color-brand-soft: var(--c-brand-soft);
+  --color-accent: var(--c-accent);
+  --color-high: var(--c-high);
+  --color-high-soft: var(--c-high-soft);
+  --color-medium: var(--c-medium);
+  --color-medium-soft: var(--c-medium-soft);
+  --color-low: var(--c-low);
+  --color-low-soft: var(--c-low-soft);
+  --color-unknown: var(--c-unknown);
+  --color-unknown-soft: var(--c-unknown-soft);
+  --shadow-card: var(--shadow-card);
 }
 
 html {
-  color-scheme: light dark;
+  -webkit-text-size-adjust: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-line-strong) transparent;
 }
 body {
-  @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased;
+  @apply bg-canvas font-sans text-[14px] leading-relaxed text-ink antialiased;
+  background-image: radial-gradient(900px 420px at 85% -8%, var(--c-glow), transparent 70%);
+  background-repeat: no-repeat;
+  min-height: 100dvh;
+  text-rendering: optimizeLegibility;
+}
+::selection {
+  background: color-mix(in oklab, var(--c-brand) 35%, transparent);
+}
+:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
 }
 
 @layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-surface shadow-card;
+  }
+  .eyebrow {
+    @apply text-[11px] font-semibold tracking-[0.08em] text-muted uppercase;
+  }
+  .page-title {
+    @apply text-[22px] leading-tight font-semibold tracking-tight sm:text-[26px];
+  }
+
+  .btn,
+  .btn-primary,
+  .btn-danger,
+  .btn-ghost {
+    @apply inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg px-3.5 text-[13px] font-medium whitespace-nowrap transition select-none active:translate-y-px disabled:pointer-events-none disabled:opacity-45;
+  }
   .btn {
-    @apply rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800;
+    @apply border border-line-strong bg-surface text-ink hover:bg-raised;
   }
-  .input {
-    @apply rounded border border-slate-200 bg-white px-2 py-1 text-xs outline-none focus:border-sky-500 dark:border-slate-700 dark:bg-slate-900;
-  }
-  .badge {
-    @apply inline-block rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap;
-  }
-}
-
-@layer components {
   .btn-primary {
-    @apply rounded bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply border border-transparent text-white shadow-sm hover:brightness-110;
+    background-image: linear-gradient(135deg, var(--c-brand), color-mix(in oklab, var(--c-brand) 62%, var(--c-accent)));
   }
   .btn-danger {
-    @apply rounded border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:bg-slate-900 dark:text-red-300 dark:hover:bg-red-950;
+    @apply border border-high/40 bg-surface text-high hover:bg-high-soft;
+  }
+  .btn-ghost {
+    @apply text-muted hover:bg-raised hover:text-ink;
+  }
+  .input {
+    @apply min-h-9 rounded-lg border border-line-strong bg-surface px-3 text-[13px] text-ink transition outline-none placeholder:text-muted/70 focus:border-brand focus:ring-3 focus:ring-brand/20;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap;
+  }
+  .th {
+    @apply px-4 py-2.5 text-left text-[11px] font-semibold tracking-[0.06em] text-muted uppercase;
+  }
+  .td {
+    @apply px-4 py-3 align-top;
+  }
+}
+
+/* Touch screens: bigger targets, and 16px text so iOS does not zoom into fields. */
+@media (pointer: coarse) {
+  .btn,
+  .btn-primary,
+  .btn-danger,
+  .btn-ghost,
+  .input {
+    min-height: 44px;
+  }
+  .input {
+    font-size: 16px;
+  }
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+@keyframes orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes sheet {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes slide-in {
+  from {
+    transform: translateX(32px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+.animate-orbit {
+  animation: orbit 24s linear infinite;
+}
+.animate-orbit-slow {
+  animation: orbit 46s linear infinite reverse;
+}
+/* `backwards` (not `both`): a finished transform animation must not keep a containing block for fixed-position drawers. */
+.animate-rise {
+  animation: rise 0.35s ease backwards;
+}
+.animate-sheet {
+  animation: sheet 0.22s ease backwards;
+}
+.animate-slide-in {
+  animation: slide-in 0.22s ease backwards;
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--c-raised) 25%, var(--c-line) 37%, var(--c-raised) 63%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease infinite;
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+@media (forced-colors: active) {
+  .card,
+  .btn,
+  .input {
+    border: 1px solid CanvasText;
   }
 }

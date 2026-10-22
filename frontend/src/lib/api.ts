@@ -225,8 +225,41 @@ export interface ProviderInfo {
   usedToday: number;
 }
 
+export interface AiStatus {
+  enabled: boolean;
+  model: string;
+  dailyLimit: number;
+}
+
+export interface ItemExplanation {
+  headline: string;
+  whatIsIt: string;
+  whyItMatters: string;
+  confidence: 'low' | 'medium' | 'high';
+  nextSteps: string[];
+}
+
+export interface BatchExplanation {
+  headline: string;
+  overview: string;
+  keyPoints: string[];
+  nextSteps: string[];
+  indicators: Array<{ value: string; headline: string; explanation: string; nextSteps: string[] }>;
+}
+
+export interface Explained<T> {
+  explanation: T;
+  model: string;
+  generatedAt: string;
+  /** The lookups changed after this was written. */
+  stale: boolean;
+  /** Served from the stored copy; no new AI request was made. */
+  cached: boolean;
+}
+
 export interface Health {
   status: string;
+  ai?: AiStatus;
   enrichment: null | {
     database: { connected: boolean; mode: 'external' | 'embedded' };
     queue: { mode: 'bullmq' | 'memory' | 'database' };
@@ -310,6 +343,12 @@ export const api = {
     );
   },
   getItem: (id: string, index: number) => getWithMeta<ItemView, { providers: ProviderSnapshot[] }>(`/api/batches/${id}/items/${index}`),
+  getBatchExplanation: (id: string) => getWithMeta<Explained<BatchExplanation> | null, AiStatus>(`/api/batches/${id}/explanation`),
+  explainBatch: (id: string, refresh = false) => send<Explained<BatchExplanation>>('POST', `/api/batches/${id}/explanation`, { refresh }),
+  getItemExplanation: (id: string, index: number) =>
+    getWithMeta<Explained<ItemExplanation> | null, AiStatus>(`/api/batches/${id}/items/${index}/explanation`),
+  explainItem: (id: string, index: number, refresh = false) =>
+    send<Explained<ItemExplanation>>('POST', `/api/batches/${id}/items/${index}/explanation`, { refresh }),
   cancelBatch: (id: string) => send<Batch>('POST', `/api/batches/${id}/cancel`),
   retryFailed: (id: string) => send<{ requeued: number }>('POST', `/api/batches/${id}/retry-failed`),
   retryResult: (resultId: string) => send<{ id: string }>('POST', `/api/results/${resultId}/retry`),

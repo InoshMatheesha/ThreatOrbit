@@ -10,6 +10,7 @@ import { hashPassword } from '../lib/password.js';
 import { User, type Role } from '../models/User.js';
 import type { IndicatorType } from '../parser/types.js';
 import { MemoryLookupQueue } from '../queue/memoryQueue.js';
+import { AiService, type AiClient } from '../services/aiService.js';
 import { AuthService, toPrincipal, type Principal } from '../services/authService.js';
 import { EnrichmentService } from '../services/enrichmentService.js';
 
@@ -54,7 +55,7 @@ export function fakeAdapter(
   return adapter;
 }
 
-export async function enrichmentHarness(adapters: ProviderAdapter[], env: Record<string, string> = {}) {
+export async function enrichmentHarness(adapters: ProviderAdapter[], env: Record<string, string> = {}, aiClient?: AiClient) {
   const config = loadConfig({
     NODE_ENV: 'test',
     VIRUSTOTAL_API_KEY: 'test-vt-key-SECRET',
@@ -67,7 +68,8 @@ export async function enrichmentHarness(adapters: ProviderAdapter[], env: Record
   const service = new EnrichmentService({ config, logger: silentLogger, registry, queue, rules: DEFAULT_RISK_RULES });
   await service.start({ background: false });
   const auth = new AuthService(config, silentLogger);
-  const app = createApp(config, silentLogger, { enrichment: service, auth, databaseMode: 'external' });
+  const ai = new AiService({ config, logger: silentLogger, ...(aiClient ? { client: aiClient } : {}) });
+  const app = createApp(config, silentLogger, { enrichment: service, auth, databaseMode: 'external', ai });
   return { config, registry, queue, service, auth, app };
 }
 

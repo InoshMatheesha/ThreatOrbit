@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Pager } from '../../components/ui';
 import { TYPE_LABELS, type IndicatorType, type ParsedEntry } from '../../lib/api';
 
 const PAGE_SIZE = 50;
@@ -15,23 +16,29 @@ const FILTERS: Array<{ value: Filter; label: string; match: (e: ParsedEntry) => 
 ];
 
 function StatusBadge({ entry }: { entry: ParsedEntry }) {
-  if (entry.status === 'invalid') {
-    return <span className="badge bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300">Invalid</span>;
-  }
+  if (entry.status === 'invalid') return <span className="badge bg-high-soft text-high">Invalid</span>;
   if (entry.duplicate) {
     return (
-      <span
-        className="badge bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-        title={`First seen on line ${entry.duplicateOfLine}`}
-      >
-        Dup of L{entry.duplicateOfLine}
+      <span className="badge bg-medium-soft text-medium" title={`First seen on line ${entry.duplicateOfLine}`}>
+        Duplicate of line {entry.duplicateOfLine}
       </span>
     );
   }
-  if (!entry.lookupEligible) {
-    return <span className="badge bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">Local</span>;
-  }
-  return <span className="badge bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">Valid</span>;
+  if (!entry.lookupEligible) return <span className="badge bg-unknown-soft text-unknown">Kept local</span>;
+  return <span className="badge bg-low-soft text-low">Valid</span>;
+}
+
+function Details({ entry }: { entry: ParsedEntry }) {
+  return (
+    <>
+      {entry.error && <div className="text-high">{entry.error}</div>}
+      {entry.notes.map((n) => (
+        <div key={n} className="text-medium">
+          {n}
+        </div>
+      ))}
+    </>
+  );
 }
 
 export function PreviewTable({ entries }: { entries: ParsedEntry[] }) {
@@ -72,25 +79,23 @@ export function PreviewTable({ entries }: { entries: ParsedEntry[] }) {
     };
 
   return (
-    <section className="rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
-        <div className="flex flex-wrap gap-1">
+    <section className="card overflow-hidden">
+      <div className="space-y-3 border-b border-line px-4 py-3 sm:px-5">
+        <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
           {FILTERS.map((f) => (
             <button
               key={f.value}
               type="button"
               onClick={() => reset(setFilter)(f.value)}
-              className={`rounded px-2 py-1 text-xs ${
-                filter === f.value
-                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+              className={`chip !px-3 !py-1.5 !text-[12px] transition ${
+                filter === f.value ? 'bg-ink text-canvas' : 'bg-raised text-muted ring-1 ring-line hover:text-ink'
               }`}
             >
-              {f.label} <span className="tabular-nums opacity-60">{counts[f.value]}</span>
+              {f.label} <span className="tabular-nums opacity-70">{counts[f.value]}</span>
             </button>
           ))}
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <select
             value={type}
             onChange={(e) => reset(setType)(e.target.value as IndicatorType | 'any')}
@@ -108,87 +113,97 @@ export function PreviewTable({ entries }: { entries: ParsedEntry[] }) {
             type="search"
             value={query}
             onChange={(e) => reset(setQuery)(e.target.value)}
-            placeholder="Search"
+            placeholder="Search entries"
             aria-label="Search entries"
-            className="input w-48"
+            className="input min-w-0 flex-1 sm:max-w-xs"
           />
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full table-fixed text-left text-xs">
-          <colgroup>
-            <col className="w-14" />
-            <col className="w-[26%]" />
-            <col className="w-[30%]" />
-            <col className="w-20" />
-            <col className="w-24" />
-            <col />
-          </colgroup>
-          <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500 dark:bg-slate-900/60 dark:text-slate-400">
-            <tr>
-              <th className="px-3 py-1.5 font-medium">Line</th>
-              <th className="px-3 py-1.5 font-medium">Original</th>
-              <th className="px-3 py-1.5 font-medium">Normalized</th>
-              <th className="px-3 py-1.5 font-medium">Type</th>
-              <th className="px-3 py-1.5 font-medium">Status</th>
-              <th className="px-3 py-1.5 font-medium">Details</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {visible.length === 0 && (
+      {visible.length === 0 && <div className="px-4 py-10 text-center text-[13px] text-muted">No entries match these filters.</div>}
+
+      {/* Phones: one card per entry. */}
+      <ul className="divide-y divide-line md:hidden">
+        {visible.map((e, i) => (
+          <li key={`${e.line}-${i}-${e.original}`} className="px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-mono text-[13px] break-all">{e.normalized ?? e.original}</div>
+                {e.normalized && e.normalized !== e.original && (
+                  <div className="font-mono text-[11px] break-all text-muted">
+                    from {e.original}
+                    {e.refanged ? ' (refanged)' : ''}
+                  </div>
+                )}
+              </div>
+              <StatusBadge entry={e} />
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted">
+              <span>Line {e.line}</span>
+              {e.type && <span>{TYPE_LABELS[e.type]}</span>}
+            </div>
+            <div className="mt-1 text-[12px]">
+              <Details entry={e} />
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {/* Larger screens: a table. */}
+      <div className="hidden overflow-x-auto md:block">
+        {visible.length > 0 && (
+          <table className="w-full table-fixed text-left text-[13px]">
+            <colgroup>
+              <col className="w-16" />
+              <col className="w-[26%]" />
+              <col className="w-[28%]" />
+              <col className="w-24" />
+              <col className="w-40" />
+              <col />
+            </colgroup>
+            <thead className="bg-raised/60">
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
-                  No entries match these filters.
-                </td>
+                <th className="th">Line</th>
+                <th className="th">Original</th>
+                <th className="th">Normalized</th>
+                <th className="th">Type</th>
+                <th className="th">Status</th>
+                <th className="th">Details</th>
               </tr>
-            )}
-            {visible.map((e, i) => (
-              <tr key={`${e.line}-${i}-${e.original}`} className="align-top hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                <td className="px-3 py-1.5 font-mono tabular-nums text-slate-400">{e.line}</td>
-                <td className="truncate px-3 py-1.5 font-mono" title={e.original}>
-                  {e.original}
-                  {e.refanged && <span className="ml-1 text-[10px] text-sky-600 dark:text-sky-400">refanged</span>}
-                </td>
-                <td className="px-3 py-1.5 font-mono break-all">
-                  {e.normalized ?? <span className="text-slate-400">-</span>}
-                  {e.display && <div className="text-[11px] text-slate-500">shown as {e.display}</div>}
-                </td>
-                <td className="px-3 py-1.5">{e.type ? TYPE_LABELS[e.type] : <span className="text-slate-400">-</span>}</td>
-                <td className="px-3 py-1.5">
-                  <StatusBadge entry={e} />
-                </td>
-                <td className="px-3 py-1.5">
-                  {e.error && <div className="text-red-600 dark:text-red-400">{e.error}</div>}
-                  {e.notes.map((n) => (
-                    <div key={n} className="text-amber-700 dark:text-amber-400">
-                      {n}
-                    </div>
-                  ))}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {visible.map((e, i) => (
+                <tr key={`${e.line}-${i}-${e.original}`} className="hover:bg-raised/50">
+                  <td className="td font-mono text-muted tabular-nums">{e.line}</td>
+                  <td className="td truncate font-mono" title={e.original}>
+                    {e.original}
+                    {e.refanged && <span className="chip ml-1.5 bg-brand-soft text-brand">refanged</span>}
+                  </td>
+                  <td className="td font-mono break-all">
+                    {e.normalized ?? <span className="text-muted">-</span>}
+                    {e.display && <div className="text-[11px] text-muted">shown as {e.display}</div>}
+                  </td>
+                  <td className="td">{e.type ? TYPE_LABELS[e.type] : <span className="text-muted">-</span>}</td>
+                  <td className="td">
+                    <StatusBadge entry={e} />
+                  </td>
+                  <td className="td text-[12px]">
+                    <Details entry={e} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
-      <div className="flex items-center justify-between border-t border-slate-200 px-3 py-1.5 text-xs text-slate-500 dark:border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-raised/60 px-4 py-2.5 text-[12px] text-muted sm:px-5">
         <span>
           {rows.length === 0
             ? '0 entries'
             : `${current * PAGE_SIZE + 1}-${Math.min(rows.length, (current + 1) * PAGE_SIZE)} of ${rows.length.toLocaleString()}`}
         </span>
-        <div className="flex items-center gap-1">
-          <button type="button" className="btn" disabled={current === 0} onClick={() => setPage(current - 1)}>
-            Prev
-          </button>
-          <span className="px-1 tabular-nums">
-            {current + 1} / {pageCount}
-          </span>
-          <button type="button" className="btn" disabled={current >= pageCount - 1} onClick={() => setPage(current + 1)}>
-            Next
-          </button>
-        </div>
+        <Pager page={current + 1} pageCount={pageCount} onPage={(p) => setPage(p - 1)} />
       </div>
     </section>
   );

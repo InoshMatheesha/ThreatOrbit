@@ -14,6 +14,7 @@ import { authRouter, usersRouter } from './routes/auth.js';
 import { batchesRouter } from './routes/batches.js';
 import { enrichmentRouter } from './routes/enrichment.js';
 import { healthRouter } from './routes/health.js';
+import { AiService } from './services/aiService.js';
 import type { AuthService } from './services/authService.js';
 import type { EnrichmentService } from './services/enrichmentService.js';
 
@@ -25,6 +26,8 @@ export interface AppOptions {
   /** Sign-in. When present, every endpoint except health and login requires a session. */
   auth?: AuthService;
   databaseMode?: 'external' | 'embedded';
+  /** Plain-English explanations. Created from the config when enrichment is on and none is given. */
+  ai?: AiService;
 }
 
 export function createApp(config: AppConfig, logger: Logger = createLogger(config.logLevel), options: AppOptions = {}): Express {
@@ -40,6 +43,7 @@ export function createApp(config: AppConfig, logger: Logger = createLogger(confi
   app.use(express.json({ limit: config.limits.maxUploadBytes + 64 * 1024 }));
 
   const { auth, enrichment } = options;
+  const ai = options.ai ?? (enrichment ? new AiService({ config, logger }) : undefined);
   if (auth) {
     app.use('/api', originCheck(config), authenticate(config, auth));
   }
@@ -49,6 +53,7 @@ export function createApp(config: AppConfig, logger: Logger = createLogger(confi
     healthRouter({
       config,
       ...(enrichment ? { service: enrichment } : {}),
+      ...(ai ? { ai } : {}),
       ...(options.databaseMode ? { databaseMode: options.databaseMode } : {}),
     }),
   );
@@ -62,7 +67,7 @@ export function createApp(config: AppConfig, logger: Logger = createLogger(confi
     app.use('/api/users', usersRouter(logger));
   }
   if (enrichment) app.post('/api/queue/tick', queueHandlers(config, enrichment).tick);
-  app.use('/api/batches', batchesRouter(config, enrichment));
+  app.use('/api/batches', batchesRouter(config, enrichment, ai));
   app.use('/api', enrichmentRouter(config, logger, enrichment));
 
   app.use('/api', notFoundHandler);
