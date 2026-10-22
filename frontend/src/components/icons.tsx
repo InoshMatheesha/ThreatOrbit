@@ -146,3 +146,10 @@ export const PencilIcon = icon(
   </>,
 );
 export const ShieldIcon = icon(<path d="M12 3 4.5 6v5.5c0 4.5 3 7.8 7.5 9.5 4.5-1.7 7.5-5 7.5-9.5V6L12 3Z" />);
+export const PulseIcon = icon(<path d="M3 12h4l3-8 4 16 3-8h4" />);
+export const LoginIcon = icon(
+  <>
+    <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" />
+    <path d="m9 8-4 4 4 4M5 12h10" />
+  </>,
+);

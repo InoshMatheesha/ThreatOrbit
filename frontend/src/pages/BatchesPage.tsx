@@ -1,33 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { LayersIcon, TrashIcon } from '../components/icons';
+import { LayersIcon, PulseIcon, TrashIcon } from '../components/icons';
 import { BatchStatusBadge, Empty, ErrorBanner, Page, Pager, Panel, ProgressBar, Segmented, Skeleton } from '../components/ui';
-import { api, type AuditEntry, type Batch, type Health } from '../lib/api';
+import { api, type Batch, type Health } from '../lib/api';
 import { useUser } from '../lib/auth';
 import { dateTime, relativeTime, shortId } from '../lib/format';
 import { Link, navigate } from '../lib/router';
 
 const PAGE_SIZE = 25;
-const ACTION_LABELS: Record<string, string> = {
-  'batch.create': 'Batch created',
-  'batch.cancel': 'Batch cancelled',
-  'batch.delete': 'Batch deleted',
-  'batch.retry_failed': 'Failed lookups retried',
-  'result.retry': 'Lookup retried',
-  'export.download': 'Results exported',
-  'history.delete_all': 'All history deleted',
-  'retention.purge': 'Retention purge',
-  'provider.test': 'Provider key tested',
-  'ai.explain': 'AI explanation written',
-  'settings.ai_update': 'AI settings changed',
-  'settings.ai_remove': 'AI key removed',
-  'auth.login': 'Signed in',
-  'auth.login_failed': 'Failed sign-in',
-  'auth.logout': 'Signed out',
-  'auth.password_change': 'Password changed',
-  'user.create': 'Team member added',
-  'user.update': 'Team member updated',
-};
-
 export function BatchesPage() {
   const user = useUser();
   const isAdmin = user.role === 'admin';
@@ -35,26 +14,20 @@ export function BatchesPage() {
   const [batches, setBatches] = useState<Batch[] | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [list, events, h] = await Promise.all([
-        api.listBatches(page, PAGE_SIZE, mine),
-        isAdmin ? api.audit(40) : Promise.resolve([]),
-        api.getHealth(),
-      ]);
+      const [list, h] = await Promise.all([api.listBatches(page, PAGE_SIZE, mine), api.getHealth()]);
       setBatches(list.data);
       setTotal(list.meta.total);
-      setAudit(events);
       setHealth(h);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [page, mine, isAdmin]);
+  }, [page, mine]);
 
   useEffect(() => {
     void load();
@@ -99,6 +72,11 @@ export function BatchesPage() {
             }}
           />
           {isAdmin && (
+            <Link to="/activity" className="btn">
+              <PulseIcon size={15} /> Activity log
+            </Link>
+          )}
+          {isAdmin && (
             <button type="button" className="btn-danger" onClick={deleteAll} disabled={!total}>
               <TrashIcon size={15} /> Delete all
             </button>
@@ -107,7 +85,7 @@ export function BatchesPage() {
       }
     >
       {error && <ErrorBanner>{error}</ErrorBanner>}
-      <div className={`grid items-start gap-5 ${isAdmin ? 'xl:grid-cols-[1fr_340px]' : ''}`}>
+      <div>
         <Panel title={`${total} batch${total === 1 ? '' : 'es'}`}>
           {batches === null ? (
             <div className="space-y-3 p-5">
@@ -197,36 +175,6 @@ export function BatchesPage() {
             </div>
           )}
         </Panel>
-
-        {isAdmin && (
-          <Panel title="Audit log">
-            {audit.length === 0 ? (
-              <Empty>No activity yet.</Empty>
-            ) : (
-              <ul className="max-h-[70vh] divide-y divide-line overflow-y-auto text-[13px]">
-                {audit.map((e, i) => (
-                  <li key={`${e.at}-${i}`} className="px-4 py-3">
-                    <div className="flex justify-between gap-3">
-                      <span className="font-semibold">{ACTION_LABELS[e.action] ?? e.action}</span>
-                      <span className="shrink-0 text-[12px] text-muted" title={dateTime(e.at)}>
-                        {relativeTime(e.at)}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 text-[12px] text-muted">
-                      <span className="text-ink">{e.actor?.name ?? 'System'}</span>
-                      {e.batchId && <span className="font-mono"> · {shortId(e.batchId)}</span>}
-                      {e.details && ' · '}
-                      {e.details &&
-                        Object.entries(e.details)
-                          .map(([k, v]) => `${k}: ${v}`)
-                          .join(' · ')}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Panel>
-        )}
       </div>
     </Page>
   );

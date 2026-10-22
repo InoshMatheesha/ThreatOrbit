@@ -84,7 +84,7 @@ Supported providers: **VirusTotal**, **AbuseIPDB**, **AlienVault OTX** and **URL
 
 - Accounts with **admin** and **analyst** roles.
 - Analysts see the whole team's batches and can change only their own. Admins manage users, review the audit log, test provider keys and manage history.
-- Audit log of sign-ins, batches, exports, retries and user changes.
+- An Activity page (administrators) shows who did what as a timeline grouped by day, with category filters and search. It covers sign-ins, batches, exports, retries, AI use, settings and user changes, and never records indicator values or keys.
 - Automatic data retention (30 days by default).
 
 ### Safety controls
