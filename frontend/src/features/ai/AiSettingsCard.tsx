@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { CheckIcon, ExternalIcon, KeyIcon, SparklesIcon, TrashIcon } from '../../components/icons';
+import { CheckIcon, ExternalIcon, KeyIcon, PencilIcon, SparklesIcon, TrashIcon } from '../../components/icons';
 import { ErrorBanner, Notice, Segmented, Skeleton, Spinner } from '../../components/ui';
 import { api, type AiProviderId, type AiSettings, type AiStatus } from '../../lib/api';
 import { relativeTime } from '../../lib/format';
@@ -39,6 +39,7 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
   const [busy, setBusy] = useState<'save' | 'remove' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
 
   const apply = useCallback(async (s: AiSettings) => {
     setSettings(s);
@@ -76,6 +77,7 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
       });
       await apply(next);
       setSaved(`${PROVIDER_LABELS[next.provider!]} accepted the key and will use ${next.model}.`);
+      setEditing(false);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -90,6 +92,7 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
     setSaved(null);
     try {
       await apply(await api.removeAiSettings());
+      setEditing(false);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -104,42 +107,103 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
   const info = settings.providers.find((p) => p.id === provider);
   const sameProvider = settings.provider === provider;
   const canSave = busy === null && (apiKey.trim().length > 0 || (sameProvider && settings.configured && model !== settings.model));
+  const showForm = !settings.configured || editing;
+
+  const header = (
+    <div className="flex flex-wrap items-center gap-3">
+      <span
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white"
+        style={{ backgroundImage: 'linear-gradient(135deg, var(--c-brand), var(--c-accent))' }}
+      >
+        <SparklesIcon size={22} />
+      </span>
+      <div className="min-w-0 flex-1 basis-[13rem]">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h2 className="text-[16px] font-semibold tracking-tight">Plain-English explanations</h2>
+          <span className={`badge ${settings.configured ? 'bg-low-soft text-low' : 'bg-unknown-soft text-unknown'}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${settings.configured ? 'bg-low' : 'bg-unknown'}`} aria-hidden />
+            {settings.configured ? 'On' : 'Off'}
+          </span>
+        </div>
+        {!showForm && settings.configured && (
+          <p className="mt-0.5 text-muted">
+            Saved {settings.source === 'database' && settings.updatedBy ? `by ${settings.updatedBy} ` : ''}
+            {settings.updatedAt ? relativeTime(settings.updatedAt) : ''}. Up to {dailyLimit ?? 100} new explanations a day; saved ones are
+            free.
+          </p>
+        )}
+      </div>
+      {!showForm && (
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <button type="button" className="btn" onClick={() => setEditing(true)}>
+            <PencilIcon size={15} /> Edit
+          </button>
+          {settings.source === 'database' && (
+            <button
+              type="button"
+              className="btn-ghost !text-high hover:!bg-high-soft"
+              disabled={busy !== null}
+              onClick={remove}
+              aria-label="Remove key"
+            >
+              {busy === 'remove' ? <Spinner /> : <TrashIcon size={15} />} Remove
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  // Connected: a compact summary instead of the setup form.
+  if (!showForm && settings.configured) {
+    return (
+      <section className="card p-5 text-[13px]">
+        {header}
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <Fact label="Provider" value={PROVIDER_LABELS[settings.provider!]} />
+          <Fact label="Model" value={settings.model ?? ''} mono />
+          <Fact
+            label="Key"
+            value={settings.keyHint ?? ''}
+            mono
+            sub={settings.source === 'database' ? 'Stored in the database' : 'Server environment variable'}
+          />
+        </div>
+        {saved && (
+          <div className="mt-4 flex items-start gap-2 text-low" role="status">
+            <CheckIcon size={16} className="mt-0.5" /> {saved}
+          </div>
+        )}
+        {error && (
+          <div className="mt-4">
+            <ErrorBanner>{error}</ErrorBanner>
+          </div>
+        )}
+      </section>
+    );
+  }
 
   return (
     <section className="card p-5 text-[13px] sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-start gap-3.5">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand">
-            <SparklesIcon size={20} />
-          </span>
-          <div>
-            <h2 className="text-[16px] font-semibold tracking-tight">Plain-English explanations</h2>
-            <p className="mt-0.5 max-w-xl text-muted">
-              An AI model explains results for people who are not security experts. Paste a key below to switch it on. Up to{' '}
-              {dailyLimit ?? 100} new explanations a day for the team; saved ones are free.
-            </p>
-          </div>
-        </div>
-        <span className={`badge ${settings.configured ? 'bg-low-soft text-low' : 'bg-unknown-soft text-unknown'}`}>
-          {settings.configured ? 'On' : 'Off'}
-        </span>
-      </div>
-
-      {settings.configured && (
-        <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-5 gap-y-1.5 rounded-xl bg-raised/70 p-4 ring-1 ring-line">
-          <dt className="text-muted">Provider</dt>
-          <dd className="font-medium">{PROVIDER_LABELS[settings.provider!]}</dd>
-          <dt className="text-muted">Model</dt>
-          <dd className="font-mono text-[12px]">{settings.model}</dd>
-          <dt className="text-muted">Key</dt>
-          <dd className="font-mono text-[12px]">{settings.keyHint}</dd>
-          <dt className="text-muted">Stored in</dt>
-          <dd>
-            {settings.source === 'database'
-              ? `the database${settings.updatedBy ? `, saved by ${settings.updatedBy} ${relativeTime(settings.updatedAt ?? undefined)}` : ''}`
-              : 'a server environment variable'}
-          </dd>
-        </dl>
+      {header}
+      {!settings.configured && (
+        <ol className="mt-5 grid gap-3 sm:grid-cols-3">
+          {[
+            ['1', 'Get a key', 'Free from Google AI Studio, takes a minute.'],
+            ['2', 'Paste it below', 'We check it with the provider first.'],
+            ['3', 'Done', 'Explain buttons appear on every batch.'],
+          ].map(([n, title, text]) => (
+            <li key={n} className="flex gap-3 rounded-xl bg-raised/70 p-3.5 ring-1 ring-line">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[12px] font-semibold text-brand">
+                {n}
+              </span>
+              <span>
+                <span className="block font-semibold">{title}</span>
+                <span className="block text-muted">{text}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
       )}
 
       <form onSubmit={save} className="mt-5 space-y-4">
@@ -184,7 +248,7 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={
-                sameProvider && settings.configured ? `Saved (${settings.keyHint}). Paste a new key to replace it` : 'Paste your API key'
+                sameProvider && settings.configured ? `Saved (${settings.keyHint}). Leave empty to keep it` : 'Paste your API key'
               }
             />
           </span>
@@ -214,11 +278,6 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
         {provider === 'anthropic' && <Notice>Claude has no free tier: usage is billed by Anthropic.</Notice>}
 
         {error && <ErrorBanner>{error}</ErrorBanner>}
-        {saved && (
-          <div className="flex items-start gap-2 text-low" role="status">
-            <CheckIcon size={16} className="mt-0.5" /> {saved}
-          </div>
-        )}
 
         <div className="flex flex-wrap items-center gap-2.5">
           <button type="submit" className="btn-primary" disabled={!canSave}>
@@ -230,17 +289,40 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
               'Save and check key'
             )}
           </button>
-          {settings.source === 'database' && (
-            <button type="button" className="btn-danger" disabled={busy !== null} onClick={remove}>
-              {busy === 'remove' ? <Spinner /> : <TrashIcon size={15} />} Remove key
+          {settings.configured && (
+            <button
+              type="button"
+              className="btn"
+              disabled={busy !== null}
+              onClick={() => {
+                setEditing(false);
+                setError(null);
+                setApiKey('');
+                setProvider(settings.provider ?? 'gemini');
+                setModel(settings.model ?? '');
+              }}
+            >
+              Cancel
             </button>
           )}
         </div>
         <p className="text-[12px] text-muted">
-          The key is checked with the provider before it is saved. It is stored on the server and is never shown again, only its last four
+          The key is checked with the provider before it is saved. It is stored on the server and never shown again, only its last four
           characters.
         </p>
       </form>
     </section>
+  );
+}
+
+function Fact({ label, value, mono = false, sub }: { label: string; value: string; mono?: boolean; sub?: string }) {
+  return (
+    <div className="rounded-xl bg-raised/70 px-4 py-3 ring-1 ring-line">
+      <div className="text-[11px] font-semibold tracking-[0.06em] text-muted uppercase">{label}</div>
+      <div className={`mt-1 truncate font-medium ${mono ? 'font-mono text-[12.5px]' : 'text-[14px]'}`} title={value}>
+        {value}
+      </div>
+      {sub && <div className="mt-0.5 text-[11px] text-muted">{sub}</div>}
+    </div>
   );
 }

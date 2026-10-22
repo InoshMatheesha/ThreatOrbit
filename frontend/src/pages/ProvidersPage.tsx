@@ -1,15 +1,19 @@
-import { useEffect, useState } from 'react';
-import { ExternalIcon } from '../components/icons';
+import { useEffect, useState, type ReactNode } from 'react';
+import { ExternalIcon, ServerIcon, SparklesIcon } from '../components/icons';
 import { ErrorBanner, Notice, Page, Skeleton, Spinner } from '../components/ui';
 import { AiSettingsCard } from '../features/ai/AiSettingsCard';
 import { api, TYPE_LABELS, type Health, type ProviderInfo } from '../lib/api';
 import { useUser } from '../lib/auth';
+
+const STATE_DOTS = { ready: 'bg-low', unconfigured: 'bg-unknown', disabled: 'bg-medium' };
 
 const STATE_STYLES = {
   ready: 'bg-low-soft text-low',
   unconfigured: 'bg-unknown-soft text-unknown',
   disabled: 'bg-medium-soft text-medium',
 };
+
+const VISIBLE_TYPES = 4;
 
 function ProviderCard({ p, canTest }: { p: ProviderInfo; canTest: boolean }) {
   const [testing, setTesting] = useState(false);
@@ -27,41 +31,60 @@ function ProviderCard({ p, canTest }: { p: ProviderInfo; canTest: boolean }) {
     }
   }
 
+  const { dailyLimit } = p.limits;
+  const pct = dailyLimit ? Math.min(100, (p.usedToday / dailyLimit) * 100) : 0;
+  const hiddenTypes = p.supports.slice(VISIBLE_TYPES);
+
   return (
-    <div className="card flex flex-col p-5 text-[13px]">
-      <div className="flex items-start justify-between gap-3">
-        <span className="text-[16px] font-semibold tracking-tight">{p.name}</span>
-        <span className={`badge ${STATE_STYLES[p.state]}`}>
-          {p.state === 'ready' ? 'Ready' : p.state === 'unconfigured' ? 'No API key' : 'Disabled'}
+    <div className="card flex flex-col p-4 text-[13px]">
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-[15px] leading-tight font-semibold tracking-tight">{p.name}</span>
+        <span className={`badge shrink-0 ${STATE_STYLES[p.state]}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${STATE_DOTS[p.state]}`} aria-hidden />
+          {p.state === 'ready' ? 'Ready' : p.state === 'unconfigured' ? 'No key' : 'Off'}
         </span>
       </div>
-      <p className="mt-1.5 text-muted">{p.description}</p>
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {p.supports.map((t) => (
-          <span key={t} className="chip bg-raised ring-1 ring-line">
+      <p className="mt-1.5 min-h-[4.1em] text-[12.5px] leading-snug text-muted">{p.description}</p>
+
+      <div className="mt-3 flex flex-wrap gap-1">
+        {p.supports.slice(0, VISIBLE_TYPES).map((t) => (
+          <span key={t} className="chip bg-raised !px-1.5 !text-[10.5px] ring-1 ring-line">
             {TYPE_LABELS[t]}
           </span>
         ))}
-      </div>
-      <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
-        <dt className="text-muted">Rate limit</dt>
-        <dd>
-          {p.limits.requestsPerMinute}/min, {p.limits.concurrency} at a time
-        </dd>
-        <dt className="text-muted">Daily quota</dt>
-        <dd>{p.limits.dailyLimit === null ? 'none enforced locally' : `${p.usedToday} of ${p.limits.dailyLimit} used today (UTC)`}</dd>
-        {p.credentialEnv && (
-          <>
-            <dt className="text-muted">Key setting</dt>
-            <dd>
-              <code className="font-mono text-[12px]">{p.credentialEnv}</code>
-            </dd>
-          </>
+        {hiddenTypes.length > 0 && (
+          <span
+            className="chip bg-raised !px-1.5 !text-[10.5px] text-muted ring-1 ring-line"
+            title={hiddenTypes.map((t) => TYPE_LABELS[t]).join(', ')}
+          >
+            +{hiddenTypes.length}
+          </span>
         )}
-      </dl>
-      <div className="mt-auto flex flex-wrap items-center gap-3 pt-4">
+      </div>
+
+      <div className="mt-4 space-y-2.5">
+        <div>
+          <div className="flex items-baseline justify-between text-[12px]">
+            <span className="text-muted">Today</span>
+            <span className="font-medium tabular-nums">
+              {dailyLimit === null ? `${p.usedToday} used` : `${p.usedToday} / ${dailyLimit.toLocaleString()}`}
+            </span>
+          </div>
+          {dailyLimit !== null && (
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-raised ring-1 ring-line ring-inset">
+              <div className={`h-full ${pct >= 90 ? 'bg-high' : pct >= 70 ? 'bg-medium' : 'bg-brand'}`} style={{ width: `${pct}%` }} />
+            </div>
+          )}
+        </div>
+        <div className="flex items-baseline justify-between text-[12px]">
+          <span className="text-muted">Speed</span>
+          <span className="font-medium tabular-nums">{p.limits.requestsPerMinute}/min</span>
+        </div>
+      </div>
+
+      <div className="mt-auto pt-4">
         {p.state === 'ready' && canTest && (
-          <button type="button" className="btn" onClick={test} disabled={testing}>
+          <button type="button" className="btn w-full" onClick={test} disabled={testing}>
             {testing ? (
               <>
                 <Spinner /> Testing…
@@ -71,19 +94,43 @@ function ProviderCard({ p, canTest }: { p: ProviderInfo; canTest: boolean }) {
             )}
           </button>
         )}
-        {p.state === 'unconfigured' && p.signupUrl && (
-          <a
-            className="inline-flex items-center gap-1 font-medium text-brand underline-offset-2 hover:underline"
-            href={p.signupUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Get a free API key <ExternalIcon size={13} />
-          </a>
+        {p.state === 'unconfigured' && (
+          <div className="space-y-1.5 text-[12px]">
+            {p.signupUrl && (
+              <a
+                className="inline-flex items-center gap-1 font-medium text-brand underline-offset-2 hover:underline"
+                href={p.signupUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Get a free API key <ExternalIcon size={12} />
+              </a>
+            )}
+            {p.credentialEnv && (
+              <div className="text-muted">
+                Set <code className="font-mono text-[11px]">{p.credentialEnv}</code>
+              </div>
+            )}
+          </div>
         )}
+        {result && <div className={`mt-2 text-[12px] ${result.ok ? 'text-low' : 'text-high'}`}>{result.message}</div>}
       </div>
-      {result && <div className={`mt-3 ${result.ok ? 'text-low' : 'text-high'}`}>{result.message}</div>}
     </div>
+  );
+}
+
+function Section({ icon, title, hint, children }: { icon: ReactNode; title: string; hint: string; children: ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-soft text-brand">{icon}</span>
+        <div>
+          <h2 className="text-[15px] leading-tight font-semibold tracking-tight">{title}</h2>
+          <p className="text-[12px] text-muted">{hint}</p>
+        </div>
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -106,7 +153,7 @@ export function ProvidersPage() {
   const e = health?.enrichment;
   const ai = health?.ai;
   return (
-    <Page title="Sources" subtitle="The services ThreatOrbit asks. API keys are held by the server and are never sent to the browser.">
+    <Page title="Sources" subtitle="Where ThreatOrbit gets its answers. API keys are held by the server and never sent to the browser.">
       {error && <ErrorBanner>{error}</ErrorBanner>}
       {isAdmin && e && (e.database.mode === 'embedded' || e.queue.mode === 'memory') && (
         <Notice tone="warn">
@@ -120,25 +167,41 @@ export function ProvidersPage() {
           . Configure MONGODB_URI (and optionally REDIS_URL) for production.
         </Notice>
       )}
-      {providers === null ? (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-60 w-full !rounded-2xl" />
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {providers.map((p) => (
-            <ProviderCard key={p.id} p={p} canTest={isAdmin} />
-          ))}
-        </div>
-      )}
+      <Section
+        icon={<ServerIcon size={16} />}
+        title="Threat intelligence sources"
+        hint={
+          providers
+            ? `${providers.filter((p) => p.state === 'ready').length} of ${providers.length} ready. These are asked about every indicator.`
+            : 'Loading…'
+        }
+      >
+        {providers === null ? (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-56 w-full !rounded-2xl" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {providers.map((p) => (
+              <ProviderCard key={p.id} p={p} canTest={isAdmin} />
+            ))}
+          </div>
+        )}
+      </Section>
 
-      <AiSettingsCard isAdmin={isAdmin} {...(ai ? { status: ai } : {})} />
+      <Section
+        icon={<SparklesIcon size={16} />}
+        title="AI assistant"
+        hint="Explains results in plain language for people who are not security experts."
+      >
+        <AiSettingsCard isAdmin={isAdmin} {...(ai ? { status: ai } : {})} />
+      </Section>
 
       <p className="text-[12px] text-muted">
-        Keys are set as server environment variables; after changing one, redeploy. Lookups only read existing reports: nothing is uploaded
-        or submitted for new analysis.
+        Threat source keys are server environment variables; after changing one, redeploy. Lookups only read existing reports: nothing is
+        uploaded or submitted for new analysis.
       </p>
     </Page>
   );
