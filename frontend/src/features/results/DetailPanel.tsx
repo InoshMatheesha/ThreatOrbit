@@ -103,7 +103,8 @@ function ProviderCard({
     );
   }
 
-  const metrics = Object.entries(result.metrics ?? {});
+  const sophos = typeof result.metrics?.sophos === 'string' ? result.metrics.sophos : null;
+  const metrics = Object.entries(result.metrics ?? {}).filter(([k]) => k !== 'sophos');
   const retryable = Boolean(onRetry) && result.status === 'failed' && result.error?.kind !== 'invalid_request';
 
   return (
@@ -138,6 +139,21 @@ function ProviderCard({
               <div className="bg-high" style={{ width: `${(result.detections.malicious / result.detections.total) * 100}%` }} />
               <div className="bg-medium" style={{ width: `${(result.detections.suspicious / result.detections.total) * 100}%` }} />
             </div>
+          </div>
+        )}
+        {sophos && (
+          <div
+            className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 rounded-lg px-3 py-2 ${
+              sophos.startsWith('Detected')
+                ? 'bg-high-soft text-high'
+                : sophos === 'Not detected'
+                  ? 'bg-medium-soft text-medium'
+                  : 'bg-unknown-soft text-unknown'
+            }`}
+            title={sophos === 'Not detected' ? 'VirusTotal flags this as malicious, but the Sophos engine did not' : undefined}
+          >
+            <span className="font-medium">Sophos engine</span>
+            <span className="font-semibold">{sophos}</span>
           </div>
         )}
         {result.abuseConfidence !== undefined && (
