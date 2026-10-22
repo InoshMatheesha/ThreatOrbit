@@ -225,8 +225,57 @@ export interface ProviderInfo {
   usedToday: number;
 }
 
+export type AiProviderId = 'gemini' | 'anthropic';
+
+export interface AiStatus {
+  enabled: boolean;
+  provider: AiProviderId | null;
+  providerName: string | null;
+  model: string | null;
+  dailyLimit: number;
+}
+
+/** Administrator view of the AI setup. The key itself is never sent to the browser. */
+export interface AiSettings {
+  configured: boolean;
+  source: 'database' | 'environment' | 'injected' | null;
+  provider: AiProviderId | null;
+  model: string | null;
+  keyHint: string | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  providers: Array<{ id: AiProviderId; name: string; defaultModel: string; signupUrl: string }>;
+}
+
+export interface ItemExplanation {
+  headline: string;
+  whatIsIt: string;
+  whyItMatters: string;
+  confidence: 'low' | 'medium' | 'high';
+  nextSteps: string[];
+}
+
+export interface BatchExplanation {
+  headline: string;
+  overview: string;
+  keyPoints: string[];
+  nextSteps: string[];
+  indicators: Array<{ value: string; headline: string; explanation: string; nextSteps: string[] }>;
+}
+
+export interface Explained<T> {
+  explanation: T;
+  model: string;
+  generatedAt: string;
+  /** The lookups changed after this was written. */
+  stale: boolean;
+  /** Served from the stored copy; no new AI request was made. */
+  cached: boolean;
+}
+
 export interface Health {
   status: string;
+  ai?: AiStatus;
   enrichment: null | {
     database: { connected: boolean; mode: 'external' | 'embedded' };
     queue: { mode: 'bullmq' | 'memory' | 'database' };
@@ -310,6 +359,17 @@ export const api = {
     );
   },
   getItem: (id: string, index: number) => getWithMeta<ItemView, { providers: ProviderSnapshot[] }>(`/api/batches/${id}/items/${index}`),
+  getBatchExplanation: (id: string) => getWithMeta<Explained<BatchExplanation> | null, AiStatus>(`/api/batches/${id}/explanation`),
+  explainBatch: (id: string, refresh = false) => send<Explained<BatchExplanation>>('POST', `/api/batches/${id}/explanation`, { refresh }),
+  getItemExplanation: (id: string, index: number) =>
+    getWithMeta<Explained<ItemExplanation> | null, AiStatus>(`/api/batches/${id}/items/${index}/explanation`),
+  explainItem: (id: string, index: number, refresh = false) =>
+    send<Explained<ItemExplanation>>('POST', `/api/batches/${id}/items/${index}/explanation`, { refresh }),
+  getAiSettings: () => send<AiSettings>('GET', '/api/settings/ai'),
+  saveAiSettings: (input: { provider: AiProviderId; apiKey?: string; model?: string }) =>
+    send<AiSettings>('PUT', '/api/settings/ai', input),
+  removeAiSettings: () => send<AiSettings>('DELETE', '/api/settings/ai'),
+  getAiModels: () => send<Array<{ id: string; name: string }>>('GET', '/api/settings/ai/models'),
   cancelBatch: (id: string) => send<Batch>('POST', `/api/batches/${id}/cancel`),
   retryFailed: (id: string) => send<{ requeued: number }>('POST', `/api/batches/${id}/retry-failed`),
   retryResult: (resultId: string) => send<{ id: string }>('POST', `/api/results/${resultId}/retry`),

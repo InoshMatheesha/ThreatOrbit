@@ -1,7 +1,19 @@
 import { useEffect, useState } from 'react';
-import { ERROR_LABELS, ErrorBanner, Notice, ResultChip, RiskBadge, Spinner, VERDICT_LABELS } from '../../components/ui';
+import { CheckIcon, CopyIcon, ExternalIcon, RefreshIcon, XIcon } from '../../components/icons';
+import {
+  ERROR_LABELS,
+  ErrorBanner,
+  Notice,
+  ResultChip,
+  RISK_PLAIN,
+  RiskBadge,
+  Skeleton,
+  Spinner,
+  VERDICT_LABELS,
+} from '../../components/ui';
 import { api, TYPE_LABELS, type ItemView, type ProviderSnapshot, type ResultView } from '../../lib/api';
 import { dateTime, relativeTime } from '../../lib/format';
+import { ItemExplainer } from '../ai/ItemExplainer';
 
 interface Props {
   batchId: string;
@@ -21,7 +33,7 @@ function SafeLink({ href, children }: { href: string; children: React.ReactNode 
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="break-all text-sky-700 underline hover:text-sky-900 dark:text-sky-400"
+      className="inline-flex items-center gap-1 break-all text-brand underline-offset-2 hover:underline"
     >
       {children}
     </a>
@@ -67,9 +79,6 @@ const METRIC_LABELS: Record<string, string> = {
   lastSeen: 'Last seen',
   urlCount: 'Malware URLs',
   onlineUrls: 'Online now',
-  noise: 'Internet noise',
-  riot: 'Known business service',
-  classification: 'Classification',
   name: 'Name',
 };
 
@@ -87,8 +96,8 @@ function ProviderCard({
 
   if (!result) {
     return (
-      <div className="rounded border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500 dark:border-slate-700">
-        <span className="font-medium">{provider.name}</span>:{' '}
+      <div className="rounded-xl border border-dashed border-line-strong px-4 py-3 text-[13px] text-muted">
+        <span className="font-semibold text-ink">{provider.name}</span>:{' '}
         {provider.state !== 'ready' ? `not used (${provider.state})` : 'does not support this indicator type'}
       </div>
     );
@@ -98,52 +107,46 @@ function ProviderCard({
   const retryable = Boolean(onRetry) && result.status === 'failed' && result.error?.kind !== 'invalid_request';
 
   return (
-    <div className="rounded border border-slate-200 text-xs dark:border-slate-700">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5 dark:border-slate-800">
-        <div className="flex items-center gap-2">
+    <div className="overflow-hidden rounded-xl border border-line text-[13px]">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-raised/60 px-4 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold">{provider.name}</span>
           <ResultChip result={result} />
         </div>
-        <span className="text-[11px] text-slate-500" title={result.lookedUpAt ? `Lookup time: ${dateTime(result.lookedUpAt)}` : undefined}>
+        <span className="text-[11px] text-muted" title={result.lookedUpAt ? `Lookup time: ${dateTime(result.lookedUpAt)}` : undefined}>
           {result.lookedUpAt
             ? `${result.cacheStatus === 'hit' ? 'cached · ' : ''}looked up ${relativeTime(result.lookedUpAt)}`
             : result.status}
           {result.attempts > 1 ? ` · ${result.attempts} attempts` : ''}
         </span>
       </div>
-      <div className="space-y-2 px-3 py-2">
+      <div className="space-y-3 px-4 py-3">
         {result.summary && <p>{result.summary}</p>}
         {result.verdict && result.status === 'completed' && (
-          <p className="text-slate-500">
+          <p className="text-muted">
             Provider verdict: {VERDICT_LABELS[result.verdict]}
             {result.outcome === 'not_found' ? ' (no record: this is not the same as clean)' : ''}
           </p>
         )}
         {result.detections && result.detections.total > 0 && (
           <div>
-            <div className="mb-0.5 flex justify-between text-[11px] text-slate-500">
-              <span>
-                {result.detections.malicious} malicious · {result.detections.suspicious} suspicious · {result.detections.harmless} harmless
-                · {result.detections.undetected} undetected
-              </span>
+            <div className="mb-1 text-[12px] text-muted">
+              {result.detections.malicious} malicious · {result.detections.suspicious} suspicious · {result.detections.harmless} harmless ·{' '}
+              {result.detections.undetected} undetected
             </div>
-            <div className="flex h-1.5 overflow-hidden rounded bg-slate-200 dark:bg-slate-800">
-              <div className="bg-red-500" style={{ width: `${(result.detections.malicious / result.detections.total) * 100}%` }} />
-              <div className="bg-amber-400" style={{ width: `${(result.detections.suspicious / result.detections.total) * 100}%` }} />
+            <div className="flex h-2 overflow-hidden rounded-full bg-raised ring-1 ring-line ring-inset">
+              <div className="bg-high" style={{ width: `${(result.detections.malicious / result.detections.total) * 100}%` }} />
+              <div className="bg-medium" style={{ width: `${(result.detections.suspicious / result.detections.total) * 100}%` }} />
             </div>
           </div>
         )}
         {result.abuseConfidence !== undefined && (
           <div>
-            <div className="mb-0.5 text-[11px] text-slate-500">Abuse confidence {result.abuseConfidence}%</div>
-            <div className="h-1.5 overflow-hidden rounded bg-slate-200 dark:bg-slate-800">
+            <div className="mb-1 text-[12px] text-muted">Abuse confidence {result.abuseConfidence}%</div>
+            <div className="h-2 overflow-hidden rounded-full bg-raised ring-1 ring-line ring-inset">
               <div
                 className={
-                  result.abuseConfidence >= 75
-                    ? 'h-full bg-red-500'
-                    : result.abuseConfidence >= 25
-                      ? 'h-full bg-amber-400'
-                      : 'h-full bg-emerald-500'
+                  result.abuseConfidence >= 75 ? 'h-full bg-high' : result.abuseConfidence >= 25 ? 'h-full bg-medium' : 'h-full bg-low'
                 }
                 style={{ width: `${result.abuseConfidence}%` }}
               />
@@ -151,19 +154,19 @@ function ProviderCard({
           </div>
         )}
         {metrics.length > 0 && (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
             {metrics.map(([k, v]) => (
               <div key={k} className="contents">
-                <dt className="text-slate-500">{METRIC_LABELS[k] ?? k}</dt>
+                <dt className="text-muted">{METRIC_LABELS[k] ?? k}</dt>
                 <dd className="break-all">{typeof v === 'boolean' ? (v ? 'yes' : 'no') : String(v)}</dd>
               </div>
             ))}
           </dl>
         )}
         {result.tags && result.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-1.5">
             {result.tags.map((t) => (
-              <span key={t} className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] dark:bg-slate-800">
+              <span key={t} className="chip bg-raised font-mono ring-1 ring-line">
                 {t}
               </span>
             ))}
@@ -180,11 +183,13 @@ function ProviderCard({
         )}
         {result.permalink && (
           <div>
-            <SafeLink href={result.permalink}>Open in {provider.name} ↗</SafeLink>
+            <SafeLink href={result.permalink}>
+              Open in {provider.name} <ExternalIcon size={13} />
+            </SafeLink>
           </div>
         )}
         {result.error && result.status !== 'completed' && (
-          <div className={result.status === 'failed' ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}>
+          <div className={result.status === 'failed' ? 'text-high' : 'text-medium'}>
             <strong>{ERROR_LABELS[result.error.kind] ?? result.error.kind}:</strong> {result.error.message}
           </div>
         )}
@@ -205,7 +210,7 @@ function ProviderCard({
               }
             }}
           >
-            {retrying ? 'Retrying…' : 'Retry this lookup'}
+            {retrying ? <Spinner /> : <RefreshIcon size={15} />} {retrying ? 'Retrying…' : 'Retry this lookup'}
           </button>
         )}
         {error && <ErrorBanner>{error}</ErrorBanner>}
@@ -239,115 +244,136 @@ export function DetailPanel({ batchId, index, version, canRetry, onClose, onChan
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previous;
+    };
   }, [onClose]);
 
   return (
-    <aside
-      className="fixed inset-y-0 right-0 z-30 flex w-full max-w-[560px] flex-col border-l border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
-      aria-label="Indicator details"
-    >
-      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2 dark:border-slate-800">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Indicator details</span>
-        <button type="button" className="btn" onClick={onClose}>
-          Close
-        </button>
-      </div>
-      <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-xs">
-        {error && <ErrorBanner>{error}</ErrorBanner>}
-        {!item && !error && (
-          <div className="flex items-center gap-2 text-slate-500">
-            <Spinner /> Loading…
-          </div>
-        )}
-        {item && (
-          <>
-            <div>
-              <div className="flex items-start justify-between gap-2">
-                <div className="font-mono text-sm break-all">{item.value}</div>
-                <button
-                  type="button"
-                  className="btn shrink-0"
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(item.value);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 1200);
-                  }}
-                >
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
+    <div className="fixed inset-0 z-40">
+      <div className="absolute inset-0 bg-[#050912]/50 backdrop-blur-[2px]" onClick={onClose} aria-hidden />
+      <aside
+        className="animate-slide-in absolute inset-y-0 right-0 flex w-full flex-col bg-surface shadow-2xl sm:max-w-[580px] sm:border-l sm:border-line"
+        aria-label="Indicator details"
+      >
+        <div className="pt-safe flex items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
+          <span className="eyebrow">Indicator details</span>
+          <button type="button" className="btn-ghost !px-2.5" onClick={onClose} aria-label="Close details">
+            <XIcon size={18} />
+          </button>
+        </div>
+        <div className="pb-safe flex-1 space-y-5 overflow-y-auto px-4 py-5 text-[13px] sm:px-5">
+          {error && <ErrorBanner>{error}</ErrorBanner>}
+          {!item && !error && (
+            <div className="space-y-3">
+              <Skeleton className="h-6 w-3/4" />
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-32 w-full" />
+            </div>
+          )}
+          {item && (
+            <>
+              <div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="font-mono text-[16px] leading-snug font-medium break-all">{item.value}</div>
+                  <button
+                    type="button"
+                    className="btn shrink-0"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(item.value);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 1200);
+                      } catch {
+                        /* clipboard blocked */
+                      }
+                    }}
+                  >
+                    {copied ? <CheckIcon size={15} /> : <CopyIcon size={15} />} {copied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                {item.display && <div className="mt-1 text-muted">Displayed as {item.display}</div>}
+                <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <RiskBadge level={item.risk.level} provisional={item.risk.provisional} />
+                  <span className="font-medium">{RISK_PLAIN[item.risk.level]}</span>
+                  <span className="text-muted">{TYPE_LABELS[item.type]}</span>
+                </div>
+                <div className="mt-1.5 text-[12px] text-muted">
+                  {item.risk.coverage.withRecord} with a record · {item.risk.coverage.noRecord} no record · {item.risk.coverage.failed}{' '}
+                  failed · {item.risk.coverage.pending} pending
+                </div>
               </div>
-              {item.display && <div className="text-slate-500">Displayed as {item.display}</div>}
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <RiskBadge level={item.risk.level} provisional={item.risk.provisional} />
-                <span className="text-slate-500">{TYPE_LABELS[item.type]}</span>
-                <span className="text-slate-500">
-                  {item.risk.coverage.withRecord} with record · {item.risk.coverage.noRecord} no record · {item.risk.coverage.failed} failed
-                  · {item.risk.coverage.pending} pending
-                </span>
+
+              <ItemExplainer batchId={batchId} index={index} />
+
+              <div>
+                <div className="eyebrow mb-2">Why this risk level</div>
+                <ul className="space-y-1.5">
+                  {item.risk.reasons.map((r) => (
+                    <li key={r} className="flex gap-2.5">
+                      <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted" aria-hidden />
+                      {r}
+                    </li>
+                  ))}
+                </ul>
               </div>
-            </div>
 
-            <div>
-              <div className="mb-1 font-semibold">Why this risk level</div>
-              <ul className="list-inside list-disc space-y-0.5 text-slate-700 dark:text-slate-300">
-                {item.risk.reasons.map((r) => (
-                  <li key={r}>{r}</li>
-                ))}
-              </ul>
-            </div>
+              {item.risk.disagreement && (
+                <Notice tone="warn">
+                  <strong>Sources disagree:</strong> {item.risk.disagreement.summary}.
+                </Notice>
+              )}
 
-            {item.risk.disagreement && (
-              <Notice tone="warn">
-                <strong>Providers disagree:</strong> {item.risk.disagreement.summary}.
-              </Notice>
-            )}
+              {item.notes.length > 0 && (
+                <div className="space-y-1 text-medium">
+                  {item.notes.map((n) => (
+                    <div key={n}>{n}</div>
+                  ))}
+                </div>
+              )}
 
-            {item.notes.length > 0 && (
-              <div className="text-amber-700 dark:text-amber-400">
-                {item.notes.map((n) => (
-                  <div key={n}>{n}</div>
+              <div className="text-[12px] text-muted">
+                Input line{item.lines.length > 1 ? 's' : ''} {item.lines.join(', ')} · submitted as{' '}
+                {item.originals.map((o, i) => (
+                  <span key={o}>
+                    {i > 0 && ', '}
+                    <code className="font-mono">{o}</code>
+                  </span>
                 ))}
               </div>
-            )}
 
-            <div className="text-slate-500">
-              Input line{item.lines.length > 1 ? 's' : ''} {item.lines.join(', ')} · submitted as{' '}
-              {item.originals.map((o, i) => (
-                <span key={o}>
-                  {i > 0 && ', '}
-                  <code className="font-mono">{o}</code>
-                </span>
-              ))}
-            </div>
-
-            <div className="space-y-2">
-              {providers
-                .filter((p) => p.state === 'ready' || item.results[p.id])
-                .map((p) => (
-                  <ProviderCard
-                    key={p.id}
-                    provider={p}
-                    result={item.results[p.id]}
-                    {...(canRetry
-                      ? {
-                          onRetry: async (id: string) => {
-                            await api.retryResult(id);
-                            onChanged();
-                          },
-                        }
-                      : {})}
-                  />
-                ))}
-              {providers
-                .filter((p) => p.state !== 'ready' && !item.results[p.id])
-                .map((p) => (
-                  <ProviderCard key={p.id} provider={p} />
-                ))}
-            </div>
-          </>
-        )}
-      </div>
-    </aside>
+              <div className="space-y-3">
+                <div className="eyebrow">Evidence by source</div>
+                {providers
+                  .filter((p) => p.state === 'ready' || item.results[p.id])
+                  .map((p) => (
+                    <ProviderCard
+                      key={p.id}
+                      provider={p}
+                      result={item.results[p.id]}
+                      {...(canRetry
+                        ? {
+                            onRetry: async (id: string) => {
+                              await api.retryResult(id);
+                              onChanged();
+                            },
+                          }
+                        : {})}
+                    />
+                  ))}
+                {providers
+                  .filter((p) => p.state !== 'ready' && !item.results[p.id])
+                  .map((p) => (
+                    <ProviderCard key={p.id} provider={p} />
+                  ))}
+              </div>
+            </>
+          )}
+        </div>
+      </aside>
+    </div>
   );
 }

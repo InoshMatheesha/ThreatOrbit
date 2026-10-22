@@ -66,6 +66,20 @@ Supported providers: **VirusTotal**, **AbuseIPDB**, **AlienVault OTX** and **URL
 - Detail panel with full evidence, tags, references and provider permalinks.
 - CSV and JSON export.
 
+### Interface
+
+- Designed for desktop, Windows laptops, tablets and phones: a sidebar on large screens, a top bar with bottom tabs on small ones, and result tables that become tappable cards on a phone.
+- Light and dark themes, following the device by default, with a manual switch.
+- Keyboard accessible, with visible focus, large touch targets and reduced-motion support.
+
+### Plain-English explanations
+
+- Optional. One click turns the results into a short explanation written for people who are not security experts: what was found, why it matters and what to do next.
+- Available for a whole batch (summary plus the most serious indicators) and for any single indicator.
+- Works with Google Gemini (free tier available) or Anthropic Claude. An administrator pastes the key on the Sources page; it is checked, then stored in the database.
+- Only indicators and what the services said about them are sent; batch labels and user details are not.
+- Saved with the batch, marked when new results make them out of date, capped per day, and never able to change the risk level.
+
 ### Team and governance
 
 - Accounts with **admin** and **analyst** roles.
@@ -142,6 +156,7 @@ ThreatOrbit deploys to **Vercel** with **MongoDB Atlas**. Both offer free tiers 
    | `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` | First administrator account (password of at least 12 characters) |
    | `VIRUSTOTAL_API_KEY`, `ABUSEIPDB_API_KEY`, `OTX_API_KEY`, `URLHAUS_AUTH_KEY` | Provider API keys |
    | `CRON_SECRET` (optional) | Random string of at least 16 characters, used for background processing |
+   | `ANTHROPIC_API_KEY` (optional) | Not needed for Gemini. Plain-English explanations are normally switched on from the Sources page after signing in |
 
 4. Select **Deploy**, then open the site and sign in.
 5. Open **Providers** and run **Test key** for each provider, then add team members under **Team**.
@@ -204,6 +219,9 @@ All settings are environment variables. [`backend/.env.example`](backend/.env.ex
 | `RETENTION_DAYS`, `AUDIT_RETENTION_DAYS` | Data retention (defaults 30 and 180 days) |
 | `<PROVIDER>_REQUESTS_PER_MINUTE`, `<PROVIDER>_DAILY_LIMIT` | Raise for paid provider plans |
 | `PROVIDERS_DISABLED` | Comma-separated providers to disable, for example `otx,urlhaus` |
+| `ANTHROPIC_API_KEY` | Optional fallback for Claude. A key saved on the Sources page (Gemini or Claude) takes priority |
+| `AI_MODEL` | Model for the `ANTHROPIC_API_KEY` fallback: `claude-opus-5-5` (default), `claude-sonnet-5-5` or `claude-haiku-5-5` |
+| `AI_DAILY_LIMIT` | New explanations per UTC day for the whole team (default 100). Saved ones are free |
 
 ## Providers
 
@@ -241,6 +259,7 @@ Default rules are defined in `backend/src/config/riskRules.ts` and can be overri
 | Secrets | Provider keys exist only as server environment variables and are never sent to the browser, logged or stored. Automated tests verify this across all endpoints |
 | Outbound requests | HTTPS only, restricted to each provider's allowlisted host, redirects refused, hard timeouts |
 | Application hardening | Strict Content Security Policy and security headers, schema validation on every request, upload size, type and encoding checks |
+| AI explanations | Opt-in, behind sign-in, capped per day. The key is set by administrators only, checked with the provider before saving, and never sent back to the browser (only its last four characters). Outside-service text is passed as quoted data and the reply is validated against a schema, so a hostile indicator cannot steer the model or add entries. Output is rendered as plain text |
 | Data handling | Request logs exclude query strings and bodies; CSV exports are protected against formula injection; the audit log never records indicator values |
 
 ## API reference

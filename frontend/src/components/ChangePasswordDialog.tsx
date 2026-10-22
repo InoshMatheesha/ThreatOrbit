@@ -61,7 +61,7 @@ export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
             ['Confirm new password', confirm, setConfirm, 'new-password'],
           ].map(([label, value, set, auto]) => (
             <label key={label as string} className="block">
-              <span className="mb-1 block font-medium">{label as string}</span>
+              <span className="mb-1.5 block font-medium">{label as string}</span>
               <input
                 type="password"
                 className="input w-full"
@@ -71,7 +71,7 @@ export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
               />
             </label>
           ))}
-          {mismatch && <p className="text-red-600">The new passwords do not match.</p>}
+          {mismatch && <p className="text-high">The new passwords do not match.</p>}
           {error && <ErrorBanner>{error}</ErrorBanner>}
         </>
       )}

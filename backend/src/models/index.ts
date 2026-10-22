@@ -6,3 +6,5 @@ export * from './ProviderUsage.js';
 export * from './Session.js';
 export * from './Throttle.js';
 export * from './User.js';
+export * from './AiExplanation.js';
+export * from './Setting.js';

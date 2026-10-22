@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import mongoose from 'mongoose';
 import type { AppConfig } from '../config/env.js';
+import type { AiService } from '../services/aiService.js';
 import type { EnrichmentService } from '../services/enrichmentService.js';
 
 const startedAt = Date.now();
@@ -9,12 +10,13 @@ export interface HealthInfo {
   config?: AppConfig;
   databaseMode?: 'external' | 'embedded';
   service?: EnrichmentService;
+  ai?: AiService;
 }
 
 /** Public liveness probe (used by the host). Internal details only for signed-in users. */
 export function healthRouter(info: HealthInfo = {}): Router {
   const router = Router();
-  router.get('/', (req, res) => {
+  router.get('/', async (req, res) => {
     const dbConnected = mongoose.connection.readyState === 1;
     const status = info.service && !dbConnected ? 'degraded' : 'ok';
     if (!req.user) {
@@ -27,6 +29,7 @@ export function healthRouter(info: HealthInfo = {}): Router {
         service: 'threatorbit',
         uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
         time: new Date().toISOString(),
+        ...(info.ai ? { ai: await info.ai.status() } : {}),
         enrichment: info.service
           ? {
               database: { connected: dbConnected, mode: info.databaseMode ?? 'external' },

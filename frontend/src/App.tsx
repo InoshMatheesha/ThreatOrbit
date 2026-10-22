@@ -1,5 +1,5 @@
 import { Spinner } from './components/ui';
-import { Header } from './components/Header';
+import { AppShell } from './components/AppShell';
 import { AuthProvider, useAuth } from './lib/auth';
 import { usePath } from './lib/router';
 import { BatchesPage } from './pages/BatchesPage';
@@ -25,17 +25,16 @@ function Shell() {
   const { user, loading } = useAuth();
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-xs text-slate-500">
-        <Spinner />
+      <div className="flex min-h-dvh items-center justify-center text-muted">
+        <Spinner className="h-5 w-5" />
       </div>
     );
   }
   if (!user) return <LoginPage />;
   return (
-    <div className="min-h-screen">
-      <Header />
+    <AppShell>
       <Routes />
-    </div>
+    </AppShell>
   );
 }
 
