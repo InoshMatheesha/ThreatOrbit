@@ -202,10 +202,11 @@ export function BatchPage({ id }: { id: string }) {
         </div>
       </div>
 
+      <ResultsTable batch={batch} version={version} selected={selected} onSelect={setSelected} />
+
       <BatchExplainer batchId={batch.id} terminal={batch.terminal} />
 
       <ProviderProgressPanel batch={batch} />
-      <ResultsTable batch={batch} version={version} selected={selected} onSelect={setSelected} />
 
       {selected !== null && (
         <DetailPanel
