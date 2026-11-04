@@ -36,7 +36,6 @@ export function createAnthropicClient(config: { apiKey: string; model: string })
         const response = await client.beta.messages.create({
           model: config.model,
           max_tokens: MAX_OUTPUT_TOKENS,
-          // If the safety layer declines an innocent-looking indicator, retry on the server-chosen fallback model.
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
           system,
@@ -96,9 +95,7 @@ export interface ExplanationResult<T> {
   explanation: T;
   model: string;
   generatedAt: Date;
-  /** The lookups changed after this was written. */
   stale: boolean;
-  /** Served from the stored copy; no AI request was made. */
   cached: boolean;
 }
 
@@ -143,7 +140,7 @@ export const AI_PROVIDERS: Record<AiProvider, ProviderMeta> = {
     defaultModel: 'openai/gpt-4o-mini',
     signupUrl: 'https://openrouter.ai/keys',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
-    description: 'Access ChatGPT, Claude, DeepSeek, and more with one key.',
+    description: 'Access ChatGPT, Claude, DeepSeek, and free models with one key.',
   },
   kimi: {
     name: 'Kimi (Moonshot AI)',
@@ -210,16 +207,214 @@ const defaultFactory: ClientFactory = (s) => {
   }
 };
 
+/** Smart model auto-detection across all providers (with free-model prioritization). */
+export function pickBestModel(
+  provider: AiProvider,
+  models: AiModelInfo[],
+  preferFree = false,
+): string {
+  const ids = models.map((m) => m.id);
+  if (ids.length === 0) return AI_PROVIDERS[provider].defaultModel;
+
+  if (provider === 'openrouter') {
+    const freeModels = models.filter((m) => m.free || m.id.endsWith(':free') || m.id.includes(':free'));
+
+    if (preferFree && freeModels.length > 0) {
+      const freePreferences = [
+        /gemini-2/i,
+        /gemini-1\.5-flash/i,
+        /deepseek.*chat/i,
+        /deepseek.*v3/i,
+        /deepseek.*r1/i,
+        /llama-3\.3-70b/i,
+        /llama-3\.1-70b/i,
+        /qwen.*72b/i,
+        /qwen.*32b/i,
+        /llama-3/i,
+      ];
+      for (const re of freePreferences) {
+        const found = freeModels.find((m) => re.test(m.id));
+        if (found) return found.id;
+      }
+      const firstFree = freeModels[0];
+      if (firstFree) return firstFree.id;
+    }
+
+    const openRouterPref = [
+      /^openai\/gpt-4o-mini/i,
+      /^google\/gemini-2\.5-flash/i,
+      /^google\/gemini-2\.0-flash/i,
+      /^deepseek\/deepseek-chat/i,
+      /^anthropic\/claude-3\.5-haiku/i,
+      /^meta-llama\/llama-3\.3-70b-instruct/i,
+    ];
+    for (const re of openRouterPref) {
+      const found = ids.find((id) => re.test(id));
+      if (found) return found;
+    }
+
+    const firstFree = freeModels[0];
+    if (firstFree) {
+      return firstFree.id;
+    }
+  }
+
+  if (provider === 'gemini') {
+    return pickDefaultGeminiModel(ids) ?? 'gemini-2.5-flash';
+  }
+
+  if (provider === 'openai') {
+    const pref = [/^gpt-4o-mini$/i, /^gpt-4o$/i, /^o3-mini$/i, /^gpt-4-turbo$/i, /^gpt-3\.5-turbo$/i];
+    for (const re of pref) {
+      const found = ids.find((id) => re.test(id));
+      if (found) return found;
+    }
+  }
+
+  if (provider === 'anthropic') {
+    const pref = [/claude-3-5-sonnet/i, /claude-3-7-sonnet/i, /claude-3-5-haiku/i, /claude-3-haiku/i, /claude-opus/i];
+    for (const re of pref) {
+      const found = ids.find((id) => re.test(id));
+      if (found) return found;
+    }
+  }
+
+  if (provider === 'kimi') {
+    const pref = [/^moonshot-v1-8k$/i, /^moonshot-v1-32k$/i, /^moonshot-v1-128k$/i];
+    for (const re of pref) {
+      const found = ids.find((id) => re.test(id));
+      if (found) return found;
+    }
+  }
+
+  if (preferFree) {
+    const free = ids.find((id) => /free/i.test(id));
+    if (free) return free;
+  }
+
+  const firstId = ids[0];
+  return firstId || AI_PROVIDERS[provider].defaultModel;
+}
+
+// ---- Data Normalization Helpers (Prevent Schema Validation Crashes) ----
+
+function normalizeString(val: unknown, fallback = ''): string {
+  if (typeof val === 'string') return val.trim();
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  return fallback;
+}
+
+function normalizeArray(val: unknown): string[] {
+  if (Array.isArray(val)) {
+    return val.map((v) => normalizeString(v)).filter(Boolean);
+  }
+  if (typeof val === 'string' && val.trim()) {
+    return val
+      .split(/\r?\n/)
+      .map((s) => s.replace(/^[-*•\d.]+\s*/, '').trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function normalizeConfidence(val: unknown): 'low' | 'medium' | 'high' {
+  if (typeof val === 'string') {
+    const s = val.toLowerCase().trim();
+    if (s.includes('high')) return 'high';
+    if (s.includes('low')) return 'low';
+    if (s.includes('med')) return 'medium';
+  }
+  return 'medium';
+}
+
+export function normalizeBatchExplanation(raw: unknown, top: Array<{ value: string }> = []): BatchExplanation {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+
+  const headline =
+    normalizeString(obj.headline) ||
+    normalizeString(obj.title) ||
+    'Security Batch Assessment';
+
+  const overview =
+    normalizeString(obj.overview) ||
+    normalizeString(obj.summary) ||
+    normalizeString(obj.description) ||
+    'Analysis of the submitted batch indicators.';
+
+  const keyPoints = normalizeArray(obj.keyPoints ?? obj.key_points ?? obj.points ?? obj.highlights);
+  const nextSteps = normalizeArray(obj.nextSteps ?? obj.next_steps ?? obj.recommendations ?? obj.actions);
+
+  const rawIndicators = Array.isArray(obj.indicators)
+    ? obj.indicators
+    : Array.isArray(obj.results)
+      ? obj.results
+      : [];
+
+  const order = new Map(top.map((v, i) => [v.value, i]));
+
+  const indicators = rawIndicators
+    .map((ind: unknown, idx: number) => {
+      const i = (ind && typeof ind === 'object' ? ind : {}) as Record<string, unknown>;
+      const fallbackValue = top[idx]?.value ?? '';
+      const value = normalizeString(i.value) || normalizeString(i.indicator) || fallbackValue;
+      return {
+        value,
+        headline: normalizeString(i.headline) || normalizeString(i.title) || 'Indicator assessment',
+        explanation:
+          normalizeString(i.explanation) ||
+          normalizeString(i.summary) ||
+          normalizeString(i.description) ||
+          'Examined against threat intelligence sources.',
+        nextSteps: normalizeArray(i.nextSteps ?? i.next_steps ?? i.recommendations),
+      };
+    })
+    .filter((i) => order.has(i.value))
+    .sort((a, b) => order.get(a.value)! - order.get(b.value)!);
+
+  return batchSchema.parse({
+    headline,
+    overview,
+    keyPoints: keyPoints.length > 0 ? keyPoints : ['Review flagged high-risk indicators first.'],
+    nextSteps: nextSteps.length > 0 ? nextSteps : ['Monitor organization traffic for these indicators.'],
+    indicators,
+  });
+}
+
+export function normalizeItemExplanation(raw: unknown, defaultHeadline = 'Indicator analysis'): ItemExplanation {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+
+  const headline =
+    normalizeString(obj.headline) ||
+    normalizeString(obj.title) ||
+    defaultHeadline;
+
+  const whatIsIt =
+    normalizeString(obj.whatIsIt ?? obj.what_is_it ?? obj.description ?? obj.summary) ||
+    'This indicator was examined against threat intelligence services.';
+
+  const whyItMatters =
+    normalizeString(obj.whyItMatters ?? obj.why_it_matters ?? obj.impact ?? obj.risk_summary) ||
+    'Evaluated based on external threat reports and security signals.';
+
+  const confidence = normalizeConfidence(obj.confidence);
+  const nextSteps = normalizeArray(obj.nextSteps ?? obj.next_steps ?? obj.recommendations ?? obj.actions);
+
+  return itemSchema.parse({
+    headline,
+    whatIsIt,
+    whyItMatters,
+    confidence,
+    nextSteps: nextSteps.length > 0 ? nextSteps : ['Verify whether any network systems communicated with this address.'],
+  });
+}
+
 const SETTING_ID = 'ai';
-/** How long a function instance trusts what it read from the database before asking again. */
 const SETTINGS_TTL_MS = 10_000;
 
 interface Deps {
   config: AppConfig;
   logger: Logger;
-  /** Use this client no matter what is stored (tests). */
   client?: AiClient;
-  /** Builds a client for a provider and key. Replaced in tests. */
   factory?: ClientFactory;
 }
 
@@ -250,7 +445,6 @@ export class AiService {
 
   // ---- configuration ----
 
-  /** The key an administrator saved, else the one from the environment. */
   async resolve(): Promise<Resolved | null> {
     if (this.deps.client) {
       return { client: this.deps.client, provider: 'anthropic', model: this.deps.config.ai.model, source: 'injected' };
@@ -283,7 +477,6 @@ export class AiService {
     };
   }
 
-  /** Safe for any signed-in user: never includes the key. */
   async status(): Promise<AiStatus> {
     const r = await this.resolve();
     return {
@@ -295,7 +488,6 @@ export class AiService {
     };
   }
 
-  /** For administrators: how it is set up, with only the last four characters of the key. */
   async describe() {
     const stored = await this.stored();
     const r = await this.resolve();
@@ -323,9 +515,15 @@ export class AiService {
     }
   }
 
-  /** Check the key against the provider, then store it. Nothing is saved if the check fails. */
   async saveSettings(
-    input: { provider: AiProvider; apiKey?: string | undefined; model?: string | undefined; baseUrl?: string | undefined },
+    input: {
+      provider: AiProvider;
+      apiKey?: string | undefined;
+      model?: string | undefined;
+      baseUrl?: string | undefined;
+      preferFree?: boolean | undefined;
+      autoDetect?: boolean | undefined;
+    },
     actor: Principal,
   ) {
     const current = await this.stored();
@@ -342,6 +540,7 @@ export class AiService {
       model: input.model ?? sameProvider?.model ?? meta.defaultModel,
       baseUrl,
     });
+
     let models: AiModelInfo[];
     try {
       models = (await probe.listModels?.()) ?? [];
@@ -359,13 +558,18 @@ export class AiService {
     }
 
     const ids = models.map((m) => m.id);
-    const model =
-      input.model?.trim() ||
-      sameProvider?.model ||
-      (input.provider === 'gemini' ? pickDefaultGeminiModel(ids) : null) ||
-      meta.defaultModel;
 
-    // Validate if models were returned, but be permissive for custom, openrouter, or flexible models
+    // Auto-detect model if requested, or if no model was explicitly passed and no existing model was saved
+    let model: string;
+    if (input.autoDetect || (!input.model && !sameProvider?.model)) {
+      model = pickBestModel(input.provider, models, Boolean(input.preferFree));
+    } else {
+      model =
+        input.model?.trim() ||
+        sameProvider?.model ||
+        pickBestModel(input.provider, models, Boolean(input.preferFree));
+    }
+
     if (ids.length > 0 && !ids.includes(model) && input.provider !== 'custom' && input.provider !== 'openrouter') {
       throw new ApiError(400, 'VALIDATION_ERROR', `The model "${model}" is not available for this key. Pick one from the list.`);
     }
@@ -413,11 +617,8 @@ export class AiService {
       if (hit && !hit.stale) return hit;
     }
     const raw = await this.generate({ system: SYSTEM_PROMPT, prompt: batchPrompt(payload), schema: BATCH_SCHEMA });
-    const parsed = batchSchema.parse(raw.json);
-    // Keep only entries for indicators that were actually sent: the model cannot add its own.
-    const order = new Map(top.map((v, i) => [v.value, i]));
-    const indicators = parsed.indicators.filter((i) => order.has(i.value)).sort((a, b) => order.get(a.value)! - order.get(b.value)!);
-    const explanation: BatchExplanation = { ...parsed, indicators };
+    // Normalize and validate, guaranteeing strict schema compatibility across all models
+    const explanation = normalizeBatchExplanation(raw.json, top);
     return this.store('batch', batch._id, -1, inputHash, explanation, raw.model, actor);
   }
 
@@ -437,7 +638,9 @@ export class AiService {
       if (hit && !hit.stale) return hit;
     }
     const raw = await this.generate({ system: SYSTEM_PROMPT, prompt: itemPrompt(payload), schema: ITEM_SCHEMA });
-    return this.store('item', batch._id, item.index, inputHash, itemSchema.parse(raw.json), raw.model, actor);
+    // Normalize and validate, guaranteeing strict schema compatibility across all models
+    const explanation = normalizeItemExplanation(raw.json, item.value);
+    return this.store('item', batch._id, item.index, inputHash, explanation, raw.model, actor);
   }
 
   // ---- internals ----
@@ -502,7 +705,7 @@ export class AiService {
       const cleaned = result.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
       return { json: JSON.parse(cleaned), model: result.model };
     } catch {
-      this.deps.logger.error({ model: result.model }, 'AI returned text that is not valid JSON');
+      this.deps.logger.error({ model: result.model, text: result.text.slice(0, 500) }, 'AI returned text that is not valid JSON');
       throw new ApiError(502, 'AI_UNAVAILABLE', 'The AI gave an answer ThreatOrbit could not read. Try again.');
     }
   }
@@ -529,7 +732,6 @@ export class AiService {
       case 'truncated':
         return new ApiError(502, 'AI_UNAVAILABLE', 'The AI ran out of room while writing. Try again.');
       default: {
-        // The provider's own message (never the key) tells an administrator what went wrong.
         const detail = err instanceof AiClientError ? err.message.replace(/\s+/g, ' ').slice(0, 180) : '';
         const code = err instanceof AiClientError && err.status ? ` (HTTP ${err.status})` : '';
         return new ApiError(

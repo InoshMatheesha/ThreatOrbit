@@ -52,7 +52,9 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
-  const [models, setModels] = useState<Array<{ id: string; name: string }>>([]);
+  const [preferFree, setPreferFree] = useState(false);
+  const [autoDetect, setAutoDetect] = useState(true);
+  const [models, setModels] = useState<Array<{ id: string; name: string; free?: boolean }>>([]);
   const [busy, setBusy] = useState<'save' | 'remove' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -81,6 +83,36 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
       .catch((e: Error) => setError(e.message));
   }, [apply]);
 
+  function autoSelectModel(fetchedModels: Array<{ id: string; name: string; free?: boolean }>, freeOnly = preferFree) {
+    if (fetchedModels.length === 0) return;
+    if (freeOnly) {
+      const free = fetchedModels.find((m) => m.free || m.id.endsWith(':free') || /free/i.test(m.id));
+      if (free) {
+        setModel(free.id);
+        return;
+      }
+    }
+    const pref = [
+      /gpt-4o-mini/i,
+      /gemini-2\.5-flash/i,
+      /gemini-2\.0-flash/i,
+      /gemini-1\.5-flash/i,
+      /deepseek.*chat/i,
+      /claude-3-5-sonnet/i,
+      /claude-3-5-haiku/i,
+      /moonshot-v1-8k/i,
+    ];
+    for (const re of pref) {
+      const found = fetchedModels.find((m) => re.test(m.id));
+      if (found) {
+        setModel(found.id);
+        return;
+      }
+    }
+    const fallback = fetchedModels[0];
+    if (fallback) setModel(fallback.id);
+  }
+
   async function save(e: FormEvent) {
     e.preventDefault();
     setBusy('save');
@@ -91,11 +123,13 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
       const next = await api.saveAiSettings({
         provider,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-        ...(model.trim() ? { model: model.trim() } : sameProvider && settings?.model ? { model: settings.model } : {}),
+        ...(model.trim() && !autoDetect ? { model: model.trim() } : sameProvider && settings?.model && !autoDetect ? { model: settings.model } : {}),
         ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+        preferFree,
+        autoDetect,
       });
       await apply(next);
-      setSaved(`${PROVIDER_LABELS[next.provider!]} accepted the key and will use ${next.model}.`);
+      setSaved(`${PROVIDER_LABELS[next.provider!]} connected! Using best model: ${next.model}.`);
       setEditing(false);
     } catch (err) {
       setError((err as Error).message);
@@ -216,8 +250,8 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
         <ol className="mt-5 grid gap-3 sm:grid-cols-3">
           {[
             ['1', 'Pick a provider', 'Gemini, OpenAI, Claude, OpenRouter, Kimi or custom API.'],
-            ['2', 'Paste your key', 'We check it with the provider first.'],
-            ['3', 'Done', 'Explain buttons appear on every batch.'],
+            ['2', 'Paste your key', 'We check it and auto-detect the best model.'],
+            ['3', 'Done', 'Plain-English summaries appear on every batch.'],
           ].map(([n, title, text]) => (
             <li key={n} className="flex gap-3 rounded-xl bg-raised/70 p-3.5 ring-1 ring-line">
               <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[12px] font-semibold text-brand">
@@ -314,15 +348,57 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
           </span>
         </label>
 
+        {/* Auto-detect & Free model preferences */}
+        <div className="rounded-xl border border-line bg-raised/40 p-3.5 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="flex items-center gap-2 cursor-pointer text-[13px]">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-[var(--c-brand)]"
+                checked={autoDetect}
+                onChange={(e) => setAutoDetect(e.target.checked)}
+              />
+              <span className="font-medium text-ink">Auto-detect best model automatically</span>
+            </label>
+            {models.length > 0 && (
+              <button
+                type="button"
+                className="btn !py-1 !px-2.5 !text-[12px]"
+                onClick={() => autoSelectModel(models, preferFree)}
+              >
+                ⚡ Pick best model now
+              </button>
+            )}
+          </div>
+
+          <label className="flex items-center gap-2 cursor-pointer text-[12px] text-muted">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-[var(--c-brand)]"
+              checked={preferFree}
+              onChange={(e) => {
+                setPreferFree(e.target.checked);
+                if (models.length > 0) autoSelectModel(models, e.target.checked);
+              }}
+            />
+            <span>Prefer free model if available (e.g. OpenRouter <code>:free</code> models, Google Gemini free tier)</span>
+          </label>
+        </div>
+
         <label className="block">
-          <span className="mb-1.5 block font-medium">Model</span>
+          <span className="mb-1.5 flex items-center justify-between font-medium">
+            <span>Model identifier</span>
+            {autoDetect && (
+              <span className="text-[11px] font-normal text-brand">Auto-detect enabled on save</span>
+            )}
+          </span>
           {models.length > 0 ? (
             <div className="space-y-2">
-              <select className="input w-full sm:max-w-sm" value={model} onChange={(e) => setModel(e.target.value)}>
+              <select className="input w-full sm:max-w-sm" value={model} onChange={(e) => { setModel(e.target.value); setAutoDetect(false); }}>
                 {!models.some((m) => m.id === model) && model && <option value={model}>{model} (custom)</option>}
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.name !== m.id ? `${m.name} (${m.id})` : m.id}
+                    {m.free ? `[FREE] ` : ''}{m.name !== m.id ? `${m.name} (${m.id})` : m.id}
                   </option>
                 ))}
               </select>
@@ -330,9 +406,9 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
                 <span>Or type custom model name:</span>
                 <input
                   className="input !py-1 !text-[12px] font-mono sm:max-w-xs"
-                  placeholder="e.g. gpt-4o, claude-3-7-sonnet"
+                  placeholder="e.g. deepseek/deepseek-r1:free, gpt-4o"
                   value={model}
-                  onChange={(e) => setModel(e.target.value)}
+                  onChange={(e) => { setModel(e.target.value); setAutoDetect(false); }}
                 />
               </div>
             </div>
@@ -341,11 +417,11 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
               className="input w-full font-mono text-[13px] sm:max-w-sm"
               placeholder={info?.defaultModel || 'Model name'}
               value={model}
-              onChange={(e) => setModel(e.target.value)}
+              onChange={(e) => { setModel(e.target.value); setAutoDetect(false); }}
             />
           )}
           <span className="mt-1.5 block text-[12px] text-muted">
-            Fast models (Flash, GPT-4o-mini, Claude 3.5 Sonnet, Moonshot-8k) work best for fast triage summaries.
+            Fast models (Flash, GPT-4o-mini, Claude 3.5 Sonnet, Moonshot-8k, DeepSeek) work best for fast SOC triage summaries.
           </span>
         </label>
 
@@ -357,7 +433,7 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
         )}
         {provider === 'openrouter' && (
           <Notice>
-            OpenRouter lets you query OpenAI, Anthropic, DeepSeek, Google, and Meta models with a single unified API key.
+            OpenRouter lets you query OpenAI, Anthropic, DeepSeek, Google, and Meta models with a single unified API key. Use <strong>:free</strong> models for zero cost!
           </Notice>
         )}
         {provider === 'kimi' && (

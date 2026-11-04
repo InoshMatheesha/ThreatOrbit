@@ -375,10 +375,10 @@ export const api = {
   explainItem: (id: string, index: number, refresh = false) =>
     send<Explained<ItemExplanation>>('POST', `/api/batches/${id}/items/${index}/explanation`, { refresh }),
   getAiSettings: () => send<AiSettings>('GET', '/api/settings/ai'),
-  saveAiSettings: (input: { provider: AiProviderId; apiKey?: string; model?: string; baseUrl?: string }) =>
+  saveAiSettings: (input: { provider: AiProviderId; apiKey?: string; model?: string; baseUrl?: string; preferFree?: boolean; autoDetect?: boolean }) =>
     send<AiSettings>('PUT', '/api/settings/ai', input),
   removeAiSettings: () => send<AiSettings>('DELETE', '/api/settings/ai'),
-  getAiModels: () => send<Array<{ id: string; name: string }>>('GET', '/api/settings/ai/models'),
+  getAiModels: () => send<Array<{ id: string; name: string; free?: boolean }>>('GET', '/api/settings/ai/models'),
   cancelBatch: (id: string) => send<Batch>('POST', `/api/batches/${id}/cancel`),
   retryFailed: (id: string) => send<{ requeued: number }>('POST', `/api/batches/${id}/retry-failed`),
   retryResult: (resultId: string) => send<{ id: string }>('POST', `/api/results/${resultId}/retry`),

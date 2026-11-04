@@ -9,6 +9,11 @@ export interface AiRequest {
 export interface AiModelInfo {
   id: string;
   name: string;
+  free?: boolean;
+  pricing?: {
+    prompt?: string | number;
+    completion?: string | number;
+  };
 }
 
 export interface AiClient {

@@ -8,6 +8,8 @@ const putSchema = z.strictObject({
   apiKey: z.string().trim().min(8).max(500).optional(),
   model: z.string().trim().min(1).max(150).optional(),
   baseUrl: z.string().trim().max(300).optional(),
+  preferFree: z.boolean().optional(),
+  autoDetect: z.boolean().optional(),
 });
 
 /** Administrator-only settings. Responses never contain the API key itself. */

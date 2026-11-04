@@ -21,12 +21,18 @@ interface OpenAiChatResponse {
   };
 }
 
+interface OpenAiModelItem {
+  id: string;
+  name?: string;
+  display_name?: string;
+  pricing?: {
+    prompt?: string | number;
+    completion?: string | number;
+  };
+}
+
 interface OpenAiModelsResponse {
-  data?: Array<{
-    id: string;
-    name?: string;
-    display_name?: string;
-  }>;
+  data?: OpenAiModelItem[];
   error?: {
     message?: string;
   };
@@ -53,7 +59,7 @@ export function createOpenAiCompatibleClient(config: OpenAiCompatibleConfig): Ai
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     authorization: `Bearer ${config.apiKey}`,
-    // Required / recommended by OpenRouter for ranking and compliance
+    // Required / recommended by OpenRouter for ranking and attribution
     'http-referer': 'https://threatorbit.app',
     'x-title': 'ThreatOrbit',
   };
@@ -154,7 +160,7 @@ export function createOpenAiCompatibleClient(config: OpenAiCompatibleConfig): Ai
         }
 
         if (!res.ok) {
-          // If the provider doesn't support /models (some custom/local servers), fallback to the configured model
+          // If the provider doesn't support /models, fallback to the configured model
           return [{ id: config.model, name: config.model }];
         }
 
@@ -164,14 +170,28 @@ export function createOpenAiCompatibleClient(config: OpenAiCompatibleConfig): Ai
         }
 
         return body.data
-          .map((m) => ({
-            id: m.id,
-            name: m.name || m.display_name || m.id,
-          }))
-          .sort((a, b) => a.id.localeCompare(b.id));
+          .map((m) => {
+            const isZeroPrice =
+              m.pricing &&
+              (m.pricing.prompt === 0 || m.pricing.prompt === '0') &&
+              (m.pricing.completion === 0 || m.pricing.completion === '0');
+            const isFree = m.id.endsWith(':free') || Boolean(isZeroPrice);
+
+            return {
+              id: m.id,
+              name: m.name || m.display_name || m.id,
+              free: isFree,
+              pricing: m.pricing,
+            };
+          })
+          .sort((a, b) => {
+            // Put free models first if any, then alphabetical
+            if (a.free && !b.free) return -1;
+            if (!a.free && b.free) return 1;
+            return a.id.localeCompare(b.id);
+          });
       } catch (err) {
         if (err instanceof AiClientError) throw err;
-        // If listing models failed, fallback to returning the chosen model so verification can proceed
         return [{ id: config.model, name: config.model }];
       }
     },
