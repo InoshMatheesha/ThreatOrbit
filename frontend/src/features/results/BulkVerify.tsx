@@ -49,19 +49,34 @@ interface Props {
  */
 function openTabsForService(ips: string[], urlBuilder: (ip: string) => string): Promise<number> {
   return new Promise((resolve) => {
-    if (ips.length === 0) { resolve(0); return; }
+    if (ips.length === 0) {
+      resolve(0);
+      return;
+    }
 
     // Open the first tab synchronously (must be inside the click handler).
-    window.open(urlBuilder(ips[0]), '_blank', 'noopener,noreferrer');
+    const firstIp = ips[0];
+    if (firstIp) {
+      window.open(urlBuilder(firstIp), '_blank', 'noopener,noreferrer');
+    }
 
-    if (ips.length === 1) { resolve(1); return; }
+    if (ips.length === 1) {
+      resolve(1);
+      return;
+    }
 
     // Stagger the remaining tabs via microtask queue to stay within the same
     // user-gesture window while giving browsers time to process each open.
     let i = 1;
     function openNext() {
-      if (i >= ips.length) { resolve(ips.length); return; }
-      window.open(urlBuilder(ips[i]), '_blank', 'noopener,noreferrer');
+      if (i >= ips.length) {
+        resolve(ips.length);
+        return;
+      }
+      const nextIp = ips[i];
+      if (nextIp) {
+        window.open(urlBuilder(nextIp), '_blank', 'noopener,noreferrer');
+      }
       i++;
       setTimeout(openNext, 0);
     }
@@ -146,7 +161,7 @@ export function BulkVerify({ items }: Props) {
                 {isBusy ? (
                   <>Opening tabs…</>
                 ) : wasDone ? (
-                  <>✓ Opened {feedback!.count} in {service.label}</>
+                  <>✓ Opened {feedback?.count ?? ipAddresses.length} in {service.label}</>
                 ) : (
                   <>
                     {service.label}{' '}
@@ -167,4 +182,3 @@ export function BulkVerify({ items }: Props) {
     </section>
   );
 }
-
