@@ -33,7 +33,7 @@ const resultsQuerySchema = z.object({
   sort: z.enum(['risk', 'value', 'type', 'line']).default('risk'),
   order: z.enum(['asc', 'desc']).default('desc'),
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+  pageSize: z.coerce.number().int().min(1).max(1000).default(50),
 });
 
 const listQuerySchema = z.object({

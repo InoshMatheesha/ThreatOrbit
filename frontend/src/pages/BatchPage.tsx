@@ -5,7 +5,6 @@ import { BatchExplainer } from '../features/ai/BatchExplainer';
 import { useBatchLive } from '../features/batches/useBatchLive';
 import { DetailPanel } from '../features/results/DetailPanel';
 import { ResultsTable } from '../features/results/ResultsTable';
-import { BulkVerify } from '../features/results/BulkVerify';
 import { api, type Batch, type ItemView } from '../lib/api';
 import { useUser } from '../lib/auth';
 import { dateTime, duration, relativeTime, shortId } from '../lib/format';
@@ -65,17 +64,20 @@ function ProviderProgressPanel({ batch }: { batch: Batch }) {
   );
 }
 
-/** Fetches all IP-type indicators for the batch (up to 500) for the BulkVerify panel. */
+/** Fetches all IP-type indicators for the batch (up to 200) for the BulkVerify toolbar. */
 function useIpItems(batchId: string, version: number): ItemView[] {
   const [items, setItems] = useState<ItemView[]>([]);
   useEffect(() => {
     const controller = new AbortController();
-    api
-      .getResults(batchId, { type: 'ipv4', sort: 'risk', order: 'desc', page: 1, pageSize: 500 }, controller.signal)
-      .then(async (r) => {
-        // Also fetch IPv6
-        const r6 = await api.getResults(batchId, { type: 'ipv6', sort: 'risk', order: 'desc', page: 1, pageSize: 500 }, controller.signal);
-        if (!controller.signal.aborted) setItems([...r.data, ...r6.data]);
+    Promise.allSettled([
+      api.getResults(batchId, { type: 'ipv4', page: 1, pageSize: 200 }, controller.signal),
+      api.getResults(batchId, { type: 'ipv6', page: 1, pageSize: 200 }, controller.signal),
+    ])
+      .then(([r4, r6]) => {
+        if (controller.signal.aborted) return;
+        const v4 = r4.status === 'fulfilled' ? r4.value.data : [];
+        const v6 = r6.status === 'fulfilled' ? r6.value.data : [];
+        setItems([...v4, ...v6]);
       })
       .catch(() => {});
     return () => controller.abort();
@@ -224,10 +226,7 @@ export function BatchPage({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* Bulk external verification panel — only shown when IPs are present */}
-      <BulkVerify items={ipItems} />
-
-      <ResultsTable batch={batch} version={version} selected={selected} onSelect={setSelected} />
+      <ResultsTable batch={batch} version={version} selected={selected} onSelect={setSelected} batchIpItems={ipItems} />
 
       <BatchExplainer batchId={batch.id} terminal={batch.terminal} />
 

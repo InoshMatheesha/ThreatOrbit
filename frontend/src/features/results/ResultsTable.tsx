@@ -11,6 +11,7 @@ import {
   type ResultsQuery,
   type RiskLevel,
 } from '../../lib/api';
+import { BulkVerify } from './BulkVerify';
 
 const PAGE_SIZE = 50;
 const RISKS: Array<RiskLevel | 'all'> = ['all', 'high', 'medium', 'low', 'unknown'];
@@ -27,9 +28,10 @@ interface Props {
   version: number;
   selected: number | null;
   onSelect: (index: number) => void;
+  batchIpItems?: ItemView[];
 }
 
-export function ResultsTable({ batch, version, selected, onSelect }: Props) {
+export function ResultsTable({ batch, version, selected, onSelect, batchIpItems }: Props) {
   const [query, setQuery] = useState<ResultsQuery>({ sort: 'risk', order: 'desc', page: 1, pageSize: PAGE_SIZE });
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<ItemView[] | null>(null);
@@ -60,6 +62,9 @@ export function ResultsTable({ batch, version, selected, onSelect }: Props) {
   const counts = batch.summary?.risk;
   const page = query.page ?? 1;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  // Determine candidate IPs: prefer whole-batch list if available, otherwise current table rows
+  const ipSource = batchIpItems && batchIpItems.length > 0 ? batchIpItems : (rows ?? []);
 
   return (
     <section className="card overflow-hidden">
@@ -161,6 +166,9 @@ export function ResultsTable({ batch, version, selected, onSelect }: Props) {
           </select>
         </div>
       </div>
+
+      {/* Dynamic bulk verification interface for IP addresses */}
+      <BulkVerify items={ipSource} variant="bar" />
 
       {error && (
         <div className="p-4">

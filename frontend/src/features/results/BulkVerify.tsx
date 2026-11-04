@@ -1,135 +1,219 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import type { ItemView } from '../../lib/api';
 
-// ── URL builders for each service ────────────────────────────────────────────
+// ── Service definitions & query builders ─────────────────────────────────────
 
-const SERVICES = [
+export const EXTERNAL_SERVICES = [
   {
     id: 'virustotal' as const,
     label: 'VirusTotal',
-    color: 'bg-blue-600 hover:bg-blue-500',
+    buttonLabel: 'Open all in VirusTotal',
+    shortLabel: 'VirusTotal',
+    color: 'bg-[#0052cc] hover:bg-[#0065ff] text-white shadow-sm ring-1 ring-blue-400/40',
+    activeColor: 'bg-emerald-600 text-white ring-1 ring-emerald-400/40',
     icon: '🔵',
-    url: (ip: string) => `https://www.virustotal.com/gui/ip-address/${ip}`,
+    url: (ip: string) => `https://www.virustotal.com/gui/ip-address/${encodeURIComponent(ip)}`,
   },
   {
     id: 'abuseipdb' as const,
     label: 'AbuseIPDB',
-    color: 'bg-orange-600 hover:bg-orange-500',
+    buttonLabel: 'Open all in AbuseIPDB',
+    shortLabel: 'AbuseIPDB',
+    color: 'bg-[#e65100] hover:bg-[#f57c00] text-white shadow-sm ring-1 ring-orange-400/40',
+    activeColor: 'bg-emerald-600 text-white ring-1 ring-emerald-400/40',
     icon: '🟠',
-    url: (ip: string) => `https://www.abuseipdb.com/check/${ip}`,
+    url: (ip: string) => `https://www.abuseipdb.com/check/${encodeURIComponent(ip)}`,
   },
   {
     id: 'otx' as const,
     label: 'OTX',
-    color: 'bg-green-700 hover:bg-green-600',
+    buttonLabel: 'Open all in OTX',
+    shortLabel: 'OTX (AlienVault)',
+    color: 'bg-[#0d8050] hover:bg-[#10a366] text-white shadow-sm ring-1 ring-emerald-400/40',
+    activeColor: 'bg-emerald-600 text-white ring-1 ring-emerald-400/40',
     icon: '🟢',
-    url: (ip: string) => `https://otx.alienvault.com/indicator/ip/${ip}`,
+    url: (ip: string) => `https://otx.alienvault.com/indicator/ip/${encodeURIComponent(ip)}`,
   },
 ] as const;
 
-type ServiceId = (typeof SERVICES)[number]['id'];
+export type ExternalServiceId = (typeof EXTERNAL_SERVICES)[number]['id'];
 
 interface FeedbackState {
-  serviceId: ServiceId;
+  serviceId: ExternalServiceId;
   count: number;
+  blocked: boolean;
 }
 
-interface Props {
-  /** All items from the current batch results page. */
-  items: ItemView[];
+export interface BulkVerifyProps {
+  /** Optional array of ItemView records to extract IPs from */
+  items?: ItemView[] | null;
+  /** Optional array of raw IP address strings */
+  ips?: string[];
+  /** Display variant: 'bar' (embedded in table toolbar) or 'card' (standalone panel) */
+  variant?: 'bar' | 'card';
+  className?: string;
 }
 
 /**
- * Opens one new tab per IP address for the selected threat-intelligence service.
- *
- * To avoid browser popup-blocker heuristics we:
- *  1. Open tabs synchronously in the same user-gesture callback (no async gaps before first open).
- *  2. Stagger subsequent opens with a minimal setTimeout(0) so the browser event loop
- *     processes each open before the next — this prevents bulk-blocking on some browsers.
+ * Programmatically opens one new browser tab per IP for the given service.
+ * Executed synchronously inside the click handler to stay within browser
+ * user-activation security policies.
  */
-function openTabsForService(ips: string[], urlBuilder: (ip: string) => string): Promise<number> {
-  return new Promise((resolve) => {
-    if (ips.length === 0) {
-      resolve(0);
-      return;
-    }
+function openTabsForService(ips: string[], urlBuilder: (ip: string) => string): { opened: number; blocked: boolean } {
+  if (ips.length === 0) return { opened: 0, blocked: false };
 
-    // Open the first tab synchronously (must be inside the click handler).
-    const firstIp = ips[0];
-    if (firstIp) {
-      window.open(urlBuilder(firstIp), '_blank', 'noopener,noreferrer');
-    }
+  let opened = 0;
+  let blocked = false;
 
-    if (ips.length === 1) {
-      resolve(1);
-      return;
-    }
-
-    // Stagger the remaining tabs via microtask queue to stay within the same
-    // user-gesture window while giving browsers time to process each open.
-    let i = 1;
-    function openNext() {
-      if (i >= ips.length) {
-        resolve(ips.length);
-        return;
+  for (let i = 0; i < ips.length; i++) {
+    const ip = ips[i];
+    if (!ip) continue;
+    try {
+      const w = window.open(urlBuilder(ip), '_blank', 'noopener,noreferrer');
+      if (!w || w.closed || typeof w.closed === 'undefined') {
+        // Browser popup blocker intervened on this tab
+        blocked = true;
+      } else {
+        opened++;
       }
-      const nextIp = ips[i];
-      if (nextIp) {
-        window.open(urlBuilder(nextIp), '_blank', 'noopener,noreferrer');
-      }
-      i++;
-      setTimeout(openNext, 0);
+    } catch {
+      blocked = true;
     }
-    setTimeout(openNext, 0);
-  });
+  }
+
+  return { opened, blocked };
 }
 
-export function BulkVerify({ items }: Props) {
+export function BulkVerify({ items, ips, variant = 'bar', className = '' }: BulkVerifyProps) {
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
-  const [busy, setBusy] = useState<ServiceId | null>(null);
+  const [busy, setBusy] = useState<ExternalServiceId | null>(null);
 
-  // Extract unique IPv4 / IPv6 addresses that are eligible for external lookup.
-  const ipAddresses = [
-    ...new Set(
-      items
-        .filter((item) => (item.type === 'ipv4' || item.type === 'ipv6') && item.lookupEligible)
-        .map((item) => item.value),
-    ),
-  ];
+  // Extract unique IP addresses from either explicit list or ItemView items
+  const ipAddresses = useMemo(() => {
+    if (ips && ips.length > 0) {
+      return [...new Set(ips)];
+    }
+    if (items && items.length > 0) {
+      return [
+        ...new Set(
+          items
+            .filter((item) => item.type === 'ipv4' || item.type === 'ipv6')
+            .map((item) => item.value),
+        ),
+      ];
+    }
+    return [];
+  }, [items, ips]);
 
   const handleVerify = useCallback(
-    async (service: (typeof SERVICES)[number]) => {
-      if (ipAddresses.length === 0 || busy) return;
+    (service: (typeof EXTERNAL_SERVICES)[number]) => {
+      if (ipAddresses.length === 0 || busy !== null) return;
+
       setBusy(service.id);
       setFeedback(null);
 
-      const count = await openTabsForService(ipAddresses, service.url);
+      const result = openTabsForService(ipAddresses, service.url);
 
-      setFeedback({ serviceId: service.id, count });
+      setFeedback({
+        serviceId: service.id,
+        count: result.opened,
+        blocked: result.blocked,
+      });
       setBusy(null);
 
-      // Clear the feedback badge after 4 seconds.
-      setTimeout(() => setFeedback((f) => (f?.serviceId === service.id ? null : f)), 4000);
+      // Auto-dismiss the positive feedback badge after 4.5 seconds
+      setTimeout(() => {
+        setFeedback((prev) => (prev?.serviceId === service.id ? null : prev));
+      }, 4500);
     },
     [ipAddresses, busy],
   );
 
+  // Do not render anything if there are no IPs identified
   if (ipAddresses.length === 0) return null;
 
+  // Render integrated toolbar bar variant (inside ResultsTable)
+  if (variant === 'bar') {
+    return (
+      <div className={`border-b border-line bg-raised/60 px-4 py-3 sm:px-5 ${className}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-brand-soft text-[12px] font-bold text-brand ring-1 ring-brand/30">
+              ⚡
+            </span>
+            <div>
+              <span className="text-[13px] font-semibold text-ink">
+                Bulk Verification
+              </span>
+              <span className="ml-1.5 text-[12px] text-muted">
+                — Open all <strong className="text-ink">{ipAddresses.length} IP{ipAddresses.length !== 1 ? 's' : ''}</strong> in one click:
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {EXTERNAL_SERVICES.map((service) => {
+              const isBusy = busy === service.id;
+              const wasDone = feedback?.serviceId === service.id;
+
+              return (
+                <button
+                  key={service.id}
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => handleVerify(service)}
+                  className={`
+                    inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60
+                    ${wasDone ? service.activeColor : service.color}
+                  `}
+                  title={`Open all ${ipAddresses.length} identified IPs in ${service.label} tabs`}
+                >
+                  <span aria-hidden>{service.icon}</span>
+                  {isBusy ? (
+                    <span>Opening…</span>
+                  ) : wasDone ? (
+                    <span>✓ Opened {feedback?.count ?? ipAddresses.length} in {service.label}</span>
+                  ) : (
+                    <span>
+                      {service.buttonLabel}{' '}
+                      <span className="ml-1 rounded-full bg-white/25 px-1.5 py-0.2 text-[10px] tabular-nums">
+                        {ipAddresses.length}
+                      </span>
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Warning if the browser's popup blocker stopped any tabs */}
+        {feedback?.blocked && (
+          <div className="mt-2.5 flex items-center gap-2 rounded-md bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-400 ring-1 ring-amber-500/20">
+            <span>⚠️</span>
+            <span>
+              Your browser may have blocked additional tabs. Click the pop-up blocker icon in your browser address bar and choose <strong>"Always allow pop-ups from this site"</strong>.
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Render standalone card variant
   return (
-    <section className="card overflow-hidden">
+    <section className={`card overflow-hidden ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
         <div>
           <h2 className="text-[13px] font-semibold tracking-tight">Bulk IP Verification</h2>
           <p className="mt-0.5 text-[12px] text-muted">
-            {ipAddresses.length} IP address{ipAddresses.length !== 1 ? 'es' : ''} identified — open all in an external
-            service at once.
+            {ipAddresses.length} IP address{ipAddresses.length !== 1 ? 'es' : ''} identified — programmatically open all external searches in one click.
           </p>
         </div>
       </div>
 
       <div className="px-4 py-4 sm:px-5">
-        {/* IP address chips */}
+        {/* Identified IP chips */}
         <div className="mb-4 flex flex-wrap gap-1.5">
           {ipAddresses.map((ip) => (
             <span key={ip} className="chip bg-raised font-mono text-[11px] ring-1 ring-line">
@@ -138,9 +222,9 @@ export function BulkVerify({ items }: Props) {
           ))}
         </div>
 
-        {/* Service buttons */}
-        <div className="flex flex-wrap gap-2">
-          {SERVICES.map((service) => {
+        {/* Action buttons */}
+        <div className="flex flex-wrap gap-2.5">
+          {EXTERNAL_SERVICES.map((service) => {
             const isBusy = busy === service.id;
             const wasDone = feedback?.serviceId === service.id;
 
@@ -151,9 +235,9 @@ export function BulkVerify({ items }: Props) {
                 disabled={busy !== null}
                 onClick={() => handleVerify(service)}
                 className={`
-                  inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-semibold text-white
+                  inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-semibold
                   transition-all duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60
-                  ${wasDone ? 'bg-emerald-600 hover:bg-emerald-500' : service.color}
+                  ${wasDone ? service.activeColor : service.color}
                 `}
                 title={`Open all ${ipAddresses.length} IP${ipAddresses.length !== 1 ? 's' : ''} in ${service.label}`}
               >
@@ -164,7 +248,7 @@ export function BulkVerify({ items }: Props) {
                   <>✓ Opened {feedback?.count ?? ipAddresses.length} in {service.label}</>
                 ) : (
                   <>
-                    {service.label}{' '}
+                    {service.buttonLabel}{' '}
                     <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[11px] tabular-nums">
                       {ipAddresses.length}
                     </span>
@@ -175,9 +259,18 @@ export function BulkVerify({ items }: Props) {
           })}
         </div>
 
-        <p className="mt-3 text-[11px] text-muted">
-          Each button opens one tab per IP. Allow pop-ups for this site if your browser blocks them.
-        </p>
+        {feedback?.blocked ? (
+          <div className="mt-3 flex items-center gap-2 rounded-md bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-400 ring-1 ring-amber-500/20">
+            <span>⚠️</span>
+            <span>
+              Your browser blocked some tabs. Please click the pop-up icon in your address bar and select <strong>"Always allow pop-ups"</strong>.
+            </span>
+          </div>
+        ) : (
+          <p className="mt-3 text-[11px] text-muted">
+            Each button programmatically opens a new browser tab for each identified IP pre-loaded with the external search query.
+          </p>
+        )}
       </div>
     </section>
   );
