@@ -57,7 +57,14 @@ describe('AI settings', () => {
     const { admin, built } = await setup();
     const before = await admin.get('/api/settings/ai');
     expect(before.body.data).toMatchObject({ configured: false, provider: null, keyHint: null });
-    expect(before.body.data.providers.map((p: { id: string }) => p.id)).toEqual(['gemini', 'anthropic']);
+    expect(before.body.data.providers.map((p: { id: string }) => p.id)).toEqual([
+      'gemini',
+      'openai',
+      'anthropic',
+      'openrouter',
+      'kimi',
+      'custom',
+    ]);
 
     const saved = await admin.put('/api/settings/ai').send({ provider: 'gemini', apiKey: KEY });
     expect(saved.status, JSON.stringify(saved.body)).toBe(200);
@@ -157,7 +164,7 @@ describe('AI settings', () => {
 
   it('validates the request body', async () => {
     const { admin } = await setup();
-    expect((await admin.put('/api/settings/ai').send({ provider: 'openai', apiKey: KEY })).status).toBe(400);
+    expect((await admin.put('/api/settings/ai').send({ provider: 'invalid_provider', apiKey: KEY })).status).toBe(400);
     expect((await admin.put('/api/settings/ai').send({ provider: 'gemini', apiKey: 'short' })).status).toBe(400);
     expect((await admin.put('/api/settings/ai').send({ provider: 'gemini', apiKey: KEY, extra: 1 })).status).toBe(400);
   });

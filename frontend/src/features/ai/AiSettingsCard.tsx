@@ -1,10 +1,26 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { CheckIcon, ExternalIcon, KeyIcon, PencilIcon, SparklesIcon, TrashIcon } from '../../components/icons';
-import { ErrorBanner, Notice, Segmented, Skeleton, Spinner } from '../../components/ui';
+import { ErrorBanner, Notice, Skeleton, Spinner } from '../../components/ui';
 import { api, type AiProviderId, type AiSettings, type AiStatus } from '../../lib/api';
 import { relativeTime } from '../../lib/format';
 
-const PROVIDER_LABELS: Record<AiProviderId, string> = { gemini: 'Google Gemini', anthropic: 'Anthropic Claude' };
+const PROVIDER_LABELS: Record<AiProviderId, string> = {
+  gemini: 'Google Gemini',
+  openai: 'OpenAI (ChatGPT)',
+  anthropic: 'Anthropic Claude',
+  openrouter: 'OpenRouter',
+  kimi: 'Kimi (Moonshot AI)',
+  custom: 'Custom / OpenAI API',
+};
+
+const DEFAULT_MODELS: Record<AiProviderId, string> = {
+  gemini: 'gemini-2.5-flash',
+  openai: 'gpt-4o-mini',
+  anthropic: 'claude-3-5-sonnet-20241022',
+  openrouter: 'openai/gpt-4o-mini',
+  kimi: 'moonshot-v1-8k',
+  custom: 'default',
+};
 
 /** Read-only for analysts; administrators paste and manage the AI key here. */
 export function AiSettingsCard({ isAdmin, status }: { isAdmin: boolean; status?: AiStatus }) {
@@ -35,6 +51,7 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
   const [provider, setProvider] = useState<AiProviderId>('gemini');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
   const [models, setModels] = useState<Array<{ id: string; name: string }>>([]);
   const [busy, setBusy] = useState<'save' | 'remove' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +62,7 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
     setSettings(s);
     if (s.provider) setProvider(s.provider);
     setModel(s.model ?? '');
+    setBaseUrl(s.baseUrl ?? '');
     setApiKey('');
     if (s.configured) {
       api
@@ -73,7 +91,8 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
       const next = await api.saveAiSettings({
         provider,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-        ...(sameProvider && model ? { model } : {}),
+        ...(model.trim() ? { model: model.trim() } : sameProvider && settings?.model ? { model: settings.model } : {}),
+        ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
       });
       await apply(next);
       setSaved(`${PROVIDER_LABELS[next.provider!]} accepted the key and will use ${next.model}.`);
@@ -106,7 +125,9 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
 
   const info = settings.providers.find((p) => p.id === provider);
   const sameProvider = settings.provider === provider;
-  const canSave = busy === null && (apiKey.trim().length > 0 || (sameProvider && settings.configured && model !== settings.model));
+  const canSave =
+    busy === null &&
+    (apiKey.trim().length > 0 || (sameProvider && settings.configured && (model !== settings.model || baseUrl !== (settings.baseUrl ?? ''))));
   const showForm = !settings.configured || editing;
 
   const header = (
@@ -160,7 +181,7 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
       <section className="card p-5 text-[13px]">
         {header}
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <Fact label="Provider" value={PROVIDER_LABELS[settings.provider!]} />
+          <Fact label="Provider" value={PROVIDER_LABELS[settings.provider!] ?? settings.provider} />
           <Fact label="Model" value={settings.model ?? ''} mono />
           <Fact
             label="Key"
@@ -169,6 +190,11 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
             sub={settings.source === 'database' ? 'Stored in the database' : 'Server environment variable'}
           />
         </div>
+        {settings.baseUrl && (
+          <div className="mt-3 text-[12px] text-muted">
+            Custom Base URL: <code className="font-mono">{settings.baseUrl}</code>
+          </div>
+        )}
         {saved && (
           <div className="mt-4 flex items-start gap-2 text-low" role="status">
             <CheckIcon size={16} className="mt-0.5" /> {saved}
@@ -189,8 +215,8 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
       {!settings.configured && (
         <ol className="mt-5 grid gap-3 sm:grid-cols-3">
           {[
-            ['1', 'Get a key', 'Free from Google AI Studio, takes a minute.'],
-            ['2', 'Paste it below', 'We check it with the provider first.'],
+            ['1', 'Pick a provider', 'Gemini, OpenAI, Claude, OpenRouter, Kimi or custom API.'],
+            ['2', 'Paste your key', 'We check it with the provider first.'],
             ['3', 'Done', 'Explain buttons appear on every batch.'],
           ].map(([n, title, text]) => (
             <li key={n} className="flex gap-3 rounded-xl bg-raised/70 p-3.5 ring-1 ring-line">
@@ -208,26 +234,60 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
 
       <form onSubmit={save} className="mt-5 space-y-4">
         <div>
-          <div className="mb-1.5 font-medium">Provider</div>
-          <Segmented
-            value={provider}
-            label="AI provider"
-            options={[
-              { value: 'gemini' as const, label: 'Google Gemini (free tier)' },
-              { value: 'anthropic' as const, label: 'Anthropic Claude (paid)' },
-            ]}
-            onChange={(v) => {
-              setProvider(v);
-              setModel(settings.provider === v ? (settings.model ?? '') : '');
-              setError(null);
-            }}
-          />
+          <div className="mb-2 font-medium">Select AI Provider</div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {settings.providers.map((p) => {
+              const active = provider === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    setProvider(p.id);
+                    setModel(settings.provider === p.id ? (settings.model ?? '') : (p.defaultModel || DEFAULT_MODELS[p.id] || ''));
+                    setBaseUrl(settings.provider === p.id ? (settings.baseUrl ?? '') : (p.defaultBaseUrl ?? ''));
+                    setError(null);
+                  }}
+                  className={`rounded-xl p-3 text-left transition ring-1 ${
+                    active
+                      ? 'bg-brand/10 text-ink ring-brand'
+                      : 'bg-raised/60 text-muted ring-line hover:bg-raised hover:text-ink'
+                  }`}
+                >
+                  <div className="font-semibold text-[13px]">{p.name}</div>
+                  <div className="mt-0.5 text-[11px] opacity-75">{p.defaultModel}</div>
+                </button>
+              );
+            })}
+          </div>
         </div>
+
+        {(info?.requiresBaseUrl || provider === 'custom' || provider === 'openrouter' || baseUrl) && (
+          <label className="block">
+            <span className="mb-1.5 flex flex-wrap items-center justify-between gap-2 font-medium">
+              API Base URL
+              <span className="text-[11px] font-normal text-muted">
+                {provider === 'openrouter'
+                  ? 'https://openrouter.ai/api/v1'
+                  : provider === 'kimi'
+                    ? 'https://api.moonshot.cn/v1'
+                    : 'e.g. https://api.openai.com/v1'}
+              </span>
+            </span>
+            <input
+              className="input w-full font-mono text-[13px]"
+              type="text"
+              placeholder={info?.defaultBaseUrl ?? 'https://api.openai.com/v1'}
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+            />
+          </label>
+        )}
 
         <label className="block">
           <span className="mb-1.5 flex flex-wrap items-center justify-between gap-2 font-medium">
             API key
-            {info && (
+            {info?.signupUrl && (
               <a
                 className="inline-flex items-center gap-1 text-[12px] font-medium text-brand underline-offset-2 hover:underline"
                 href={info.signupUrl}
@@ -254,28 +314,62 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
           </span>
         </label>
 
-        {sameProvider && settings.configured && models.length > 0 && (
-          <label className="block">
-            <span className="mb-1.5 block font-medium">Model</span>
-            <select className="input w-full sm:max-w-sm" value={model} onChange={(e) => setModel(e.target.value)}>
-              {!models.some((m) => m.id === model) && model && <option value={model}>{model}</option>}
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.id}
-                </option>
-              ))}
-            </select>
-            <span className="mt-1.5 block text-[12px] text-muted">Flash models are fast and the best fit for short explanations.</span>
-          </label>
-        )}
+        <label className="block">
+          <span className="mb-1.5 block font-medium">Model</span>
+          {models.length > 0 ? (
+            <div className="space-y-2">
+              <select className="input w-full sm:max-w-sm" value={model} onChange={(e) => setModel(e.target.value)}>
+                {!models.some((m) => m.id === model) && model && <option value={model}>{model} (custom)</option>}
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name !== m.id ? `${m.name} (${m.id})` : m.id}
+                  </option>
+                ))}
+              </select>
+              <div className="flex items-center gap-2 text-[12px] text-muted">
+                <span>Or type custom model name:</span>
+                <input
+                  className="input !py-1 !text-[12px] font-mono sm:max-w-xs"
+                  placeholder="e.g. gpt-4o, claude-3-7-sonnet"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                />
+              </div>
+            </div>
+          ) : (
+            <input
+              className="input w-full font-mono text-[13px] sm:max-w-sm"
+              placeholder={info?.defaultModel || 'Model name'}
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+            />
+          )}
+          <span className="mt-1.5 block text-[12px] text-muted">
+            Fast models (Flash, GPT-4o-mini, Claude 3.5 Sonnet, Moonshot-8k) work best for fast triage summaries.
+          </span>
+        </label>
 
         {provider === 'gemini' && (
           <Notice tone="warn">
             On Google's free tier, the text you send may be used by Google to improve its products. ThreatOrbit sends only indicators and
-            what the threat services said about them, never batch labels or names. Use a paid Gemini key if that is not acceptable.
+            what the threat services said about them, never batch labels or names.
           </Notice>
         )}
-        {provider === 'anthropic' && <Notice>Claude has no free tier: usage is billed by Anthropic.</Notice>}
+        {provider === 'openrouter' && (
+          <Notice>
+            OpenRouter lets you query OpenAI, Anthropic, DeepSeek, Google, and Meta models with a single unified API key.
+          </Notice>
+        )}
+        {provider === 'kimi' && (
+          <Notice>
+            Kimi (Moonshot AI) uses Chinese-optimized large language models with long context support via an OpenAI-compatible API.
+          </Notice>
+        )}
+        {provider === 'custom' && (
+          <Notice>
+            Connect to any self-hosted or cloud OpenAI-compatible server (DeepSeek, Groq, Local Ollama, vLLM, LM Studio).
+          </Notice>
+        )}
 
         {error && <ErrorBanner>{error}</ErrorBanner>}
 
@@ -300,6 +394,7 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
                 setApiKey('');
                 setProvider(settings.provider ?? 'gemini');
                 setModel(settings.model ?? '');
+                setBaseUrl(settings.baseUrl ?? '');
               }}
             >
               Cancel
@@ -307,8 +402,7 @@ function AdminAiSettings({ dailyLimit }: { dailyLimit?: number | undefined }) {
           )}
         </div>
         <p className="text-[12px] text-muted">
-          The key is checked with the provider before it is saved. It is stored on the server and never shown again, only its last four
-          characters.
+          The key is verified with the provider before it is saved. It is stored securely on the server and never shown again.
         </p>
       </form>
     </section>

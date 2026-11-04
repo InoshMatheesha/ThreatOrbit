@@ -17,6 +17,7 @@ import {
 } from './aiPrompts.js';
 import { AiClientError, type AiClient, type AiModelInfo, type AiRequest } from './aiClient.js';
 import { createGeminiClient, pickDefaultGeminiModel } from './geminiClient.js';
+import { createOpenAiCompatibleClient } from './openaiCompatibleClient.js';
 import { audit } from './audit.js';
 import type { Principal } from './authService.js';
 import { reserveRequest } from './providerUsage.js';
@@ -106,23 +107,108 @@ const hash = (value: unknown) =>
     .update(`v${PROMPT_VERSION}:${JSON.stringify(value)}`)
     .digest('hex');
 
-export type AiProvider = 'gemini' | 'anthropic';
+export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'kimi' | 'custom';
 
-export const AI_PROVIDERS: Record<AiProvider, { name: string; defaultModel: string; signupUrl: string }> = {
-  gemini: { name: 'Google Gemini', defaultModel: 'gemini-2.5-flash', signupUrl: 'https://aistudio.google.com/apikey' },
-  anthropic: { name: 'Anthropic Claude', defaultModel: 'claude-opus-5-5', signupUrl: 'https://console.anthropic.com/' },
+export interface ProviderMeta {
+  name: string;
+  defaultModel: string;
+  signupUrl: string;
+  defaultBaseUrl?: string;
+  requiresBaseUrl?: boolean;
+  description?: string;
+}
+
+export const AI_PROVIDERS: Record<AiProvider, ProviderMeta> = {
+  gemini: {
+    name: 'Google Gemini',
+    defaultModel: 'gemini-2.5-flash',
+    signupUrl: 'https://aistudio.google.com/apikey',
+    description: 'Fast and free tier friendly.',
+  },
+  openai: {
+    name: 'OpenAI (ChatGPT)',
+    defaultModel: 'gpt-4o-mini',
+    signupUrl: 'https://platform.openai.com/api-keys',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    description: 'GPT-4o, GPT-4o-mini, o3-mini.',
+  },
+  anthropic: {
+    name: 'Anthropic Claude',
+    defaultModel: 'claude-3-5-sonnet-20241022',
+    signupUrl: 'https://console.anthropic.com/',
+    description: 'Claude 3.5 Sonnet, Claude 3.7 Sonnet, Opus.',
+  },
+  openrouter: {
+    name: 'OpenRouter',
+    defaultModel: 'openai/gpt-4o-mini',
+    signupUrl: 'https://openrouter.ai/keys',
+    defaultBaseUrl: 'https://openrouter.ai/api/v1',
+    description: 'Access ChatGPT, Claude, DeepSeek, and more with one key.',
+  },
+  kimi: {
+    name: 'Kimi (Moonshot AI)',
+    defaultModel: 'moonshot-v1-8k',
+    signupUrl: 'https://platform.moonshot.cn/',
+    defaultBaseUrl: 'https://api.moonshot.cn/v1',
+    description: 'Moonshot v1 8k, 32k, 128k.',
+  },
+  custom: {
+    name: 'Custom / OpenAI-Compatible API',
+    defaultModel: 'default',
+    signupUrl: 'https://github.com/InoshMatheesha/ThreatOrbit',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    requiresBaseUrl: true,
+    description: 'Any OpenAI-compatible endpoint (DeepSeek, Groq, Ollama, vLLM).',
+  },
 };
 
 export interface AiSettings {
   provider: AiProvider;
   apiKey: string;
   model: string;
+  baseUrl?: string;
 }
 
 export type ClientFactory = (settings: AiSettings) => AiClient;
 
-const defaultFactory: ClientFactory = (s) =>
-  s.provider === 'gemini' ? createGeminiClient({ apiKey: s.apiKey, model: s.model }) : createAnthropicClient(s);
+const defaultFactory: ClientFactory = (s) => {
+  switch (s.provider) {
+    case 'gemini':
+      return createGeminiClient({ apiKey: s.apiKey, model: s.model });
+    case 'anthropic':
+      return createAnthropicClient(s);
+    case 'openai':
+      return createOpenAiCompatibleClient({
+        baseUrl: s.baseUrl || 'https://api.openai.com/v1',
+        apiKey: s.apiKey,
+        model: s.model,
+        providerName: 'OpenAI',
+      });
+    case 'openrouter':
+      return createOpenAiCompatibleClient({
+        baseUrl: s.baseUrl || 'https://openrouter.ai/api/v1',
+        apiKey: s.apiKey,
+        model: s.model,
+        providerName: 'OpenRouter',
+      });
+    case 'kimi':
+      return createOpenAiCompatibleClient({
+        baseUrl: s.baseUrl || 'https://api.moonshot.cn/v1',
+        apiKey: s.apiKey,
+        model: s.model,
+        providerName: 'Kimi (Moonshot AI)',
+      });
+    case 'custom':
+      return createOpenAiCompatibleClient({
+        baseUrl: s.baseUrl || 'https://api.openai.com/v1',
+        apiKey: s.apiKey,
+        model: s.model,
+        providerName: 'Custom AI API',
+      });
+    default:
+      return createGeminiClient({ apiKey: s.apiKey, model: s.model });
+  }
+};
 
 const SETTING_ID = 'ai';
 /** How long a function instance trusts what it read from the database before asking again. */
@@ -184,11 +270,14 @@ export class AiService {
   private async stored(): Promise<(AiSettings & { updatedAt: Date; updatedBy?: { id: string; name: string } }) | null> {
     const doc = await Setting.findById(SETTING_ID).lean();
     const v = doc?.value as Partial<AiSettings> | undefined;
-    if (!doc || !v?.apiKey || !v.model || (v.provider !== 'gemini' && v.provider !== 'anthropic')) return null;
+    if (!doc || !v?.apiKey || !v.model || !v.provider || !Object.prototype.hasOwnProperty.call(AI_PROVIDERS, v.provider)) {
+      return null;
+    }
     return {
-      provider: v.provider,
+      provider: v.provider as AiProvider,
       apiKey: v.apiKey,
       model: v.model,
+      baseUrl: v.baseUrl,
       updatedAt: doc.updatedAt,
       ...(doc.updatedBy ? { updatedBy: doc.updatedBy } : {}),
     };
@@ -216,10 +305,11 @@ export class AiService {
       source: r?.source ?? null,
       provider: r?.provider ?? null,
       model: r?.model ?? null,
+      baseUrl: stored?.baseUrl ?? null,
       keyHint: key ? `...${key.slice(-4)}` : null,
       updatedAt: stored?.updatedAt ?? null,
       updatedBy: stored?.updatedBy?.name ?? null,
-      providers: Object.entries(AI_PROVIDERS).map(([id, p]) => ({ id, ...p })),
+      providers: Object.entries(AI_PROVIDERS).map(([id, p]) => ({ id: id as AiProvider, ...p })),
     };
   }
 
@@ -234,13 +324,24 @@ export class AiService {
   }
 
   /** Check the key against the provider, then store it. Nothing is saved if the check fails. */
-  async saveSettings(input: { provider: AiProvider; apiKey?: string | undefined; model?: string | undefined }, actor: Principal) {
+  async saveSettings(
+    input: { provider: AiProvider; apiKey?: string | undefined; model?: string | undefined; baseUrl?: string | undefined },
+    actor: Principal,
+  ) {
     const current = await this.stored();
     const sameProvider = current?.provider === input.provider ? current : null;
     const apiKey = input.apiKey?.trim() || sameProvider?.apiKey;
     if (!apiKey) throw new ApiError(400, 'VALIDATION_ERROR', 'Paste an API key.');
 
-    const probe = this.factory({ provider: input.provider, apiKey, model: input.model ?? AI_PROVIDERS[input.provider].defaultModel });
+    const meta = AI_PROVIDERS[input.provider] ?? AI_PROVIDERS.gemini;
+    const baseUrl = input.baseUrl?.trim() || sameProvider?.baseUrl || meta.defaultBaseUrl;
+
+    const probe = this.factory({
+      provider: input.provider,
+      apiKey,
+      model: input.model ?? sameProvider?.model ?? meta.defaultModel,
+      baseUrl,
+    });
     let models: AiModelInfo[];
     try {
       models = (await probe.listModels?.()) ?? [];
@@ -251,7 +352,7 @@ export class AiService {
         throw new ApiError(
           400,
           'VALIDATION_ERROR',
-          `${AI_PROVIDERS[input.provider].name} rejected this key. Check that you copied all of it.`,
+          `${meta.name} rejected this key. Check that you copied all of it.`,
         );
       }
       throw this.toApiError(err);
@@ -259,18 +360,24 @@ export class AiService {
 
     const ids = models.map((m) => m.id);
     const model =
-      input.model ??
-      sameProvider?.model ??
-      (input.provider === 'gemini' ? pickDefaultGeminiModel(ids) : null) ??
-      AI_PROVIDERS[input.provider].defaultModel;
-    if (ids.length > 0 && !ids.includes(model)) {
+      input.model?.trim() ||
+      sameProvider?.model ||
+      (input.provider === 'gemini' ? pickDefaultGeminiModel(ids) : null) ||
+      meta.defaultModel;
+
+    // Validate if models were returned, but be permissive for custom, openrouter, or flexible models
+    if (ids.length > 0 && !ids.includes(model) && input.provider !== 'custom' && input.provider !== 'openrouter') {
       throw new ApiError(400, 'VALIDATION_ERROR', `The model "${model}" is not available for this key. Pick one from the list.`);
     }
 
     await Setting.updateOne(
       { _id: SETTING_ID },
       {
-        $set: { value: { provider: input.provider, apiKey, model }, updatedAt: new Date(), updatedBy: { id: actor.id, name: actor.name } },
+        $set: {
+          value: { provider: input.provider, apiKey, model, ...(baseUrl ? { baseUrl } : {}) },
+          updatedAt: new Date(),
+          updatedBy: { id: actor.id, name: actor.name },
+        },
       },
       { upsert: true },
     );
@@ -392,7 +499,8 @@ export class AiService {
       throw this.toApiError(err);
     }
     try {
-      return { json: JSON.parse(result.text), model: result.model };
+      const cleaned = result.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      return { json: JSON.parse(cleaned), model: result.model };
     } catch {
       this.deps.logger.error({ model: result.model }, 'AI returned text that is not valid JSON');
       throw new ApiError(502, 'AI_UNAVAILABLE', 'The AI gave an answer ThreatOrbit could not read. Try again.');

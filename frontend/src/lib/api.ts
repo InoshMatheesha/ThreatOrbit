@@ -225,7 +225,7 @@ export interface ProviderInfo {
   usedToday: number;
 }
 
-export type AiProviderId = 'gemini' | 'anthropic';
+export type AiProviderId = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'kimi' | 'custom';
 
 export interface AiStatus {
   enabled: boolean;
@@ -244,7 +244,16 @@ export interface AiSettings {
   keyHint: string | null;
   updatedAt: string | null;
   updatedBy: string | null;
-  providers: Array<{ id: AiProviderId; name: string; defaultModel: string; signupUrl: string }>;
+  baseUrl?: string | null;
+  providers: Array<{
+    id: AiProviderId;
+    name: string;
+    defaultModel: string;
+    signupUrl: string;
+    defaultBaseUrl?: string;
+    requiresBaseUrl?: boolean;
+    description?: string;
+  }>;
 }
 
 export interface ItemExplanation {
@@ -366,7 +375,7 @@ export const api = {
   explainItem: (id: string, index: number, refresh = false) =>
     send<Explained<ItemExplanation>>('POST', `/api/batches/${id}/items/${index}/explanation`, { refresh }),
   getAiSettings: () => send<AiSettings>('GET', '/api/settings/ai'),
-  saveAiSettings: (input: { provider: AiProviderId; apiKey?: string; model?: string }) =>
+  saveAiSettings: (input: { provider: AiProviderId; apiKey?: string; model?: string; baseUrl?: string }) =>
     send<AiSettings>('PUT', '/api/settings/ai', input),
   removeAiSettings: () => send<AiSettings>('DELETE', '/api/settings/ai'),
   getAiModels: () => send<Array<{ id: string; name: string }>>('GET', '/api/settings/ai/models'),

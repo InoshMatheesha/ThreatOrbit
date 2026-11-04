@@ -3,10 +3,11 @@ import { z } from 'zod';
 import type { AiService } from '../services/aiService.js';
 
 const putSchema = z.strictObject({
-  provider: z.enum(['gemini', 'anthropic']),
+  provider: z.enum(['gemini', 'openai', 'anthropic', 'openrouter', 'kimi', 'custom']),
   // Optional so the model can be changed without pasting the key again.
-  apiKey: z.string().trim().min(8).max(300).optional(),
-  model: z.string().trim().min(1).max(120).optional(),
+  apiKey: z.string().trim().min(8).max(500).optional(),
+  model: z.string().trim().min(1).max(150).optional(),
+  baseUrl: z.string().trim().max(300).optional(),
 });
 
 /** Administrator-only settings. Responses never contain the API key itself. */
@@ -18,8 +19,8 @@ export function settingsHandlers(ai: AiService) {
     const body = putSchema.parse(req.body ?? {});
     res.json({ data: await ai.saveSettings(body, req.user!) });
   };
-  const remove: RequestHandler = async (req, res) => {
-    res.json({ data: await ai.removeSettings(req.user!) });
+  const remove: RequestHandler = async (_req, res) => {
+    res.json({ data: await ai.removeSettings(_req.user!) });
   };
   const models: RequestHandler = async (_req, res) => {
     res.json({ data: await ai.listModels() });
