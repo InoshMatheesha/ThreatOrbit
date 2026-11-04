@@ -25,7 +25,7 @@ const POINTS = [
 
 export function LoginPage() {
   const { signIn } = useAuth();
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +36,9 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      await signIn(email, password);
+      // Pass username as the email field — the backend matches by email address.
+      // Update authService.login() to also support username lookup if needed.
+      await signIn(username, password);
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
@@ -91,16 +93,16 @@ export function LoginPage() {
 
           <div className="mt-7 space-y-4">
             <label className="block">
-              <span className="mb-1.5 block text-[13px] font-medium">Email</span>
+              <span className="mb-1.5 block text-[13px] font-medium">Username</span>
               <input
                 className="input w-full"
-                type="email"
+                type="text"
                 autoComplete="username"
-                inputMode="email"
                 required
                 autoFocus
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Enter your username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
               />
             </label>
             <div>

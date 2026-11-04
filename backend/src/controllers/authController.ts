@@ -4,7 +4,9 @@ import type { AppConfig } from '../config/env.js';
 import { clearSessionCookie, setSessionCookie } from '../middleware/auth.js';
 import type { AuthService } from '../services/authService.js';
 
-const loginSchema = z.strictObject({ email: z.string().trim().max(254), password: z.string().min(1).max(500) });
+// Accept either an email address or a plain username string in the `email` field.
+// The authService.login() will distinguish between the two based on whether '@' is present.
+const loginSchema = z.strictObject({ email: z.string().trim().min(1).max(254), password: z.string().min(1).max(500) });
 const passwordSchema = z.strictObject({ currentPassword: z.string().min(1).max(500), newPassword: z.string().max(500) });
 
 const meta = (req: Request) => ({

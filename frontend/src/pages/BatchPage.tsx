@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DownloadIcon, TrashIcon, XIcon, RefreshIcon } from '../components/icons';
 import { BatchStatusBadge, ErrorBanner, Notice, Page, Panel, ProgressBar, RiskGauge, Skeleton, Stat } from '../components/ui';
 import { BatchExplainer } from '../features/ai/BatchExplainer';
 import { useBatchLive } from '../features/batches/useBatchLive';
 import { DetailPanel } from '../features/results/DetailPanel';
 import { ResultsTable } from '../features/results/ResultsTable';
-import { api, type Batch } from '../lib/api';
+import { BulkVerify } from '../features/results/BulkVerify';
+import { api, type Batch, type ItemView } from '../lib/api';
 import { useUser } from '../lib/auth';
 import { dateTime, duration, relativeTime, shortId } from '../lib/format';
 import { Link, navigate } from '../lib/router';
@@ -64,12 +65,33 @@ function ProviderProgressPanel({ batch }: { batch: Batch }) {
   );
 }
 
+/** Fetches all IP-type indicators for the batch (up to 500) for the BulkVerify panel. */
+function useIpItems(batchId: string, version: number): ItemView[] {
+  const [items, setItems] = useState<ItemView[]>([]);
+  useEffect(() => {
+    const controller = new AbortController();
+    api
+      .getResults(batchId, { type: 'ipv4', sort: 'risk', order: 'desc', page: 1, pageSize: 500 }, controller.signal)
+      .then(async (r) => {
+        // Also fetch IPv6
+        const r6 = await api.getResults(batchId, { type: 'ipv6', sort: 'risk', order: 'desc', page: 1, pageSize: 500 }, controller.signal);
+        if (!controller.signal.aborted) setItems([...r.data, ...r6.data]);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [batchId, version]);
+  return items;
+}
+
 export function BatchPage({ id }: { id: string }) {
   const user = useUser();
   const { batch, error, version, reload } = useBatchLive(id);
   const [selected, setSelected] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // All IP indicators in this batch — fed into BulkVerify.
+  const ipItems = useIpItems(id, version);
 
   async function act(name: string, fn: () => Promise<unknown>) {
     setBusy(name);
@@ -201,6 +223,9 @@ export function BatchPage({ id }: { id: string }) {
           />
         </div>
       </div>
+
+      {/* Bulk external verification panel — only shown when IPs are present */}
+      <BulkVerify items={ipItems} />
 
       <ResultsTable batch={batch} version={version} selected={selected} onSelect={setSelected} />
 

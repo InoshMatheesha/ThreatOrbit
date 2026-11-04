@@ -76,12 +76,22 @@ export class AuthService {
     return true;
   }
 
-  async login(email: string, password: string, meta: SessionMeta) {
-    const user = await User.findOne({ email: email.trim().toLowerCase() });
+  /**
+   * Authenticate a user by username or email + password.
+   * If the input contains '@' it is treated as an email address; otherwise it
+   * is matched case-insensitively against the user's `name` field (username).
+   */
+  async login(usernameOrEmail: string, password: string, meta: SessionMeta) {
+    const input = usernameOrEmail.trim();
+    const escapedInput = input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const user = input.includes('@')
+      ? await User.findOne({ email: input.toLowerCase() })
+      : await User.findOne({ name: { $regex: new RegExp(`^${escapedInput}$`, 'i') } });
+
     if (!user || !user.active) {
       await verifyPassword(password, await dummyPasswordHash());
       await audit(this.logger, 'auth.login_failed', null, undefined, { reason: user ? 'inactive' : 'unknown_user' });
-      throw new ApiError(401, 'INVALID_CREDENTIALS', 'Invalid email or password');
+      throw new ApiError(401, 'INVALID_CREDENTIALS', 'Invalid username or password');
     }
     if (user.lockedUntil && user.lockedUntil > new Date()) {
       throw new ApiError(429, 'ACCOUNT_LOCKED', 'Too many failed sign-in attempts. Try again in a few minutes.');
@@ -98,7 +108,7 @@ export class AuthService {
         reason: 'bad_password',
         locked: failed >= MAX_FAILED_LOGINS,
       });
-      throw new ApiError(401, 'INVALID_CREDENTIALS', 'Invalid email or password');
+      throw new ApiError(401, 'INVALID_CREDENTIALS', 'Invalid username or password');
     }
 
     await User.updateOne({ _id: user._id }, { $set: { failedLogins: 0, lastLoginAt: new Date() }, $unset: { lockedUntil: 1 } });
