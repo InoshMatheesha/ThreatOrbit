@@ -127,11 +127,18 @@ body {
   .input {
     @apply min-h-9 rounded-lg border border-line-strong bg-surface px-3 text-[13px] text-ink transition outline-none placeholder:text-muted/70 focus:border-brand focus:ring-3 focus:ring-brand/20;
   }
+  /* Chips recolour as lookups finish, so ease the change instead of letting it snap. */
   .chip {
     @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap;
+    transition:
+      background-color 0.25s ease,
+      color 0.25s ease;
   }
   .badge {
     @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap;
+    transition:
+      background-color 0.25s ease,
+      color 0.25s ease;
   }
   .th {
     @apply px-4 py-2.5 text-left text-[11px] font-semibold tracking-[0.06em] text-muted uppercase;
@@ -197,6 +204,14 @@ body {
     opacity: 1;
   }
 }
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 @keyframes shimmer {
   to {
     background-position: -200% 0;
@@ -217,6 +232,13 @@ body {
 }
 .animate-slide-in {
   animation: slide-in 0.22s ease backwards;
+}
+.animate-fade {
+  animation: fade 0.25s ease backwards;
+}
+/* Rows settle in as a page of results arrives; the delay is staggered inline, capped so a full page never feels slow. */
+.animate-row {
+  animation: rise 0.3s ease backwards;
 }
 .skeleton {
   background: linear-gradient(90deg, var(--c-raised) 25%, var(--c-line) 37%, var(--c-raised) 63%);

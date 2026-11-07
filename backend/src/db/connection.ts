@@ -29,15 +29,24 @@ async function syncIndexes() {
   await Promise.all(MODELS.map((m) => m.syncIndexes()));
 }
 
+let indexesEnsured: Promise<unknown> | null = null;
+
 /**
- * Serverless variant: connect once per function instance and reuse it across
- * invocations. Only creates missing indexes (cheap), never drops any.
+ * Serverless variant: connect once per function instance and reuse it across invocations.
+ *
+ * Index creation is started but not awaited. Every index already exists after the first
+ * deployment, so blocking each cold start on ten round trips to Atlas only adds latency to
+ * the first request an instance serves; a missing index still gets built, just in the
+ * background. Nothing is ever dropped.
  */
 export async function connectServerless(config: AppConfig): Promise<void> {
   if (mongoose.connection.readyState === 1) return;
   mongoose.set('strictQuery', true);
+  mongoose.set('autoIndex', false);
   await mongoose.connect(config.database.uri, { serverSelectionTimeoutMS: 8_000, maxPoolSize: 5 });
-  await Promise.all(MODELS.map((m) => m.createIndexes()));
+  indexesEnsured ??= Promise.all(MODELS.map((m) => m.createIndexes())).catch((err: Error) => {
+    console.error('Index creation failed (queries still work, just slower):', err.message);
+  });
 }
 
 /**

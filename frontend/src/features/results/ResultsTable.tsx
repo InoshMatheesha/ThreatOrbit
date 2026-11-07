@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertIcon, SearchIcon } from '../../components/icons';
 import { Empty, ErrorBanner, Pager, PROVIDER_SHORT, ResultChip, RiskBadge, Spinner } from '../../components/ui';
 import {
@@ -14,6 +14,12 @@ import {
 import { BulkVerify } from './BulkVerify';
 
 const PAGE_SIZE = 50;
+/**
+ * The batch header polls every 1.5s so the progress bars stay live, but a page of results is
+ * far larger than that header. Refetching the table is coalesced to this interval, which keeps
+ * the rows current without re-sending the whole page twice a second during a long batch.
+ */
+const ROWS_REFRESH_MS = 3000;
 const RISKS: Array<RiskLevel | 'all'> = ['all', 'high', 'medium', 'low', 'unknown'];
 const STATUS_LABELS: Record<ItemView['status'], string> = {
   pending: 'Pending',
@@ -28,16 +34,15 @@ interface Props {
   version: number;
   selected: number | null;
   onSelect: (index: number) => void;
-  /** Every indicator in the batch, for opening them all in provider tabs. */
-  allItems?: ItemView[];
 }
 
-export function ResultsTable({ batch, version, selected, onSelect, allItems }: Props) {
+export function ResultsTable({ batch, version, selected, onSelect }: Props) {
   const [query, setQuery] = useState<ResultsQuery>({ sort: 'risk', order: 'desc', page: 1, pageSize: PAGE_SIZE });
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<ItemView[] | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Debounce the free-text search.
   useEffect(() => {
@@ -45,8 +50,31 @@ export function ResultsTable({ batch, version, selected, onSelect, allItems }: P
     return () => clearTimeout(t);
   }, [search]);
 
+  // Throttle (not debounce): the first bump refetches at once, later ones land on the interval,
+  // so a batch that keeps reporting progress still refreshes steadily instead of never.
+  const [rowsVersion, setRowsVersion] = useState(0);
+  const lastFetched = useRef(Date.now());
+  const seenVersion = useRef(version);
+  useEffect(() => {
+    // First render: the fetch below already runs, so don't ask for the same page twice.
+    if (seenVersion.current === version) return;
+    seenVersion.current = version;
+    const waited = Date.now() - lastFetched.current;
+    if (waited >= ROWS_REFRESH_MS) {
+      lastFetched.current = Date.now();
+      setRowsVersion((v) => v + 1);
+      return;
+    }
+    const timer = setTimeout(() => {
+      lastFetched.current = Date.now();
+      setRowsVersion((v) => v + 1);
+    }, ROWS_REFRESH_MS - waited);
+    return () => clearTimeout(timer);
+  }, [version]);
+
   useEffect(() => {
     const controller = new AbortController();
+    setRefreshing(true);
     api
       .getResults(batch.id, query, controller.signal)
       .then((r) => {
@@ -54,18 +82,20 @@ export function ResultsTable({ batch, version, selected, onSelect, allItems }: P
         setTotal(r.meta.total);
         setError(null);
       })
-      .catch((e: Error) => !controller.signal.aborted && setError(e.message));
+      .catch((e: Error) => !controller.signal.aborted && setError(e.message))
+      .finally(() => !controller.signal.aborted && setRefreshing(false));
     return () => controller.abort();
-  }, [batch.id, query, version]);
+  }, [batch.id, query, rowsVersion]);
 
   const set = (patch: Partial<ResultsQuery>) => setQuery((q) => ({ ...q, ...patch, page: patch.page ?? 1 }));
+  // Rows animate in when the filter, sort or page changes, but not on the 1.5s polls, which
+  // keep the same key so React updates the existing rows and the chips just transition colour.
+  const viewKey = `${query.risk ?? ''}|${query.type ?? ''}|${query.provider ?? ''}|${query.status ?? ''}|${query.disagreement ?? ''}|${query.q ?? ''}|${query.sort}|${query.order}|${query.page}`;
+  const stagger = (i: number) => ({ animationDelay: `${Math.min(i, 14) * 22}ms` });
   const columns = batch.providers.filter((p) => p.state === 'ready');
   const counts = batch.summary?.risk;
   const page = query.page ?? 1;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-  // The whole batch once loaded; until then, the rows on screen.
-  const tabSource = allItems && allItems.length > 0 ? allItems : (rows ?? []);
 
   return (
     <section className="card overflow-hidden">
@@ -168,7 +198,7 @@ export function ResultsTable({ batch, version, selected, onSelect, allItems }: P
         </div>
       </div>
 
-      <BulkVerify items={tabSource} />
+      <BulkVerify items={rows ?? []} />
 
       {error && (
         <div className="p-4">
@@ -183,9 +213,9 @@ export function ResultsTable({ batch, version, selected, onSelect, allItems }: P
       {rows?.length === 0 && <Empty icon={<SearchIcon size={28} />}>No indicators match these filters.</Empty>}
 
       {/* Phones: one tappable card per indicator. */}
-      <ul className="divide-y divide-line md:hidden">
-        {rows?.map((item) => (
-          <li key={item.index}>
+      <ul key={viewKey} className="divide-y divide-line md:hidden">
+        {rows?.map((item, i) => (
+          <li key={item.index} className="animate-row" style={stagger(i)}>
             <button
               type="button"
               onClick={() => onSelect(item.index)}
@@ -237,12 +267,13 @@ export function ResultsTable({ batch, version, selected, onSelect, allItems }: P
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-line">
-              {rows.map((item) => (
+            <tbody key={viewKey} className="divide-y divide-line">
+              {rows.map((item, i) => (
                 <tr
                   key={item.index}
                   onClick={() => onSelect(item.index)}
-                  className={`cursor-pointer transition hover:bg-raised/60 ${selected === item.index ? 'bg-brand-soft/60' : ''}`}
+                  style={stagger(i)}
+                  className={`animate-row cursor-pointer transition hover:bg-raised/60 ${selected === item.index ? 'bg-brand-soft/60' : ''}`}
                 >
                   <td className="td font-mono text-muted tabular-nums">{item.lines[0]}</td>
                   <td className="td max-w-[380px] font-mono break-all">
@@ -277,9 +308,14 @@ export function ResultsTable({ batch, version, selected, onSelect, allItems }: P
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-raised/60 px-4 py-2.5 text-[12px] text-muted sm:px-5">
-        <span>
-          {total.toLocaleString()} indicator{total === 1 ? '' : 's'} ·{' '}
-          <span className="opacity-80">·c means a saved result was reused</span>
+        <span className="flex items-center gap-2">
+          <span>
+            {total.toLocaleString()} indicator{total === 1 ? '' : 's'} ·{' '}
+            <span className="opacity-80">·c means a saved result was reused</span>
+          </span>
+          <span className={`transition-opacity duration-300 ${refreshing && rows ? 'opacity-100' : 'opacity-0'}`} aria-hidden>
+            <Spinner />
+          </span>
         </span>
         <Pager page={page} pageCount={pageCount} onPage={(p) => set({ page: p })} />
       </div>

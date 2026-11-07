@@ -6,10 +6,10 @@ import type { AppConfig } from '../config/env.js';
 import { PROVIDER_IDS } from '../config/env.js';
 import { ApiError } from '../lib/errors.js';
 import { decodeTextFile } from '../middleware/upload.js';
-import { Batch, EnrichmentResult, TERMINAL_BATCH_STATUSES, type BatchDoc } from '../models/index.js';
+import { Batch, EnrichmentResult, TERMINAL_BATCH_STATUSES, type BatchDoc, type EnrichmentResultDoc } from '../models/index.js';
 import { INDICATOR_TYPES, InputTooLargeError, InvalidCsvError, PARSE_MODES, parseIndicators } from '../parser/index.js';
 import type { EnrichmentService } from '../services/enrichmentService.js';
-import { buildItemViews, filterItems, providerProgress, riskSummary } from '../services/resultViews.js';
+import { buildItemViews, filterItems, providerProgress, RESULT_FIELDS, riskSummary, toListItem } from '../services/resultViews.js';
 
 const booleanish = z.union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')]);
 
@@ -51,10 +51,17 @@ export function publicBatch(batch: BatchLike) {
   return { ...rest, id: batch._id, terminal: TERMINAL_BATCH_STATUSES.has(batch.status) };
 }
 
-export async function loadBatchWithViews(service: EnrichmentService, id: string) {
+/**
+ * Load a batch and derive its item views. `fields` keeps the lookups that are fetched down
+ * to what the caller renders: an open batch page polls this every couple of seconds, and a
+ * 300-indicator batch holds over a thousand lookup documents.
+ */
+export async function loadBatchWithViews(service: EnrichmentService, id: string, fields: keyof typeof RESULT_FIELDS = 'full') {
   const batch = await Batch.findById(batchIdSchema.parse(id)).lean();
   if (!batch) throw new ApiError(404, 'NOT_FOUND', 'Batch not found');
-  const results = await EnrichmentResult.find({ batchId: batch._id }).lean();
+  // A projected document really is missing fields, but every consumer below (buildItemViews,
+  // assessRisk, providerProgress) reads them as optional, so the narrower union only gets in the way.
+  const results = (await EnrichmentResult.find({ batchId: batch._id }, RESULT_FIELDS[fields]).lean()) as EnrichmentResultDoc[];
   return { batch, results, views: buildItemViews(batch, results, service.rules) };
 }
 
@@ -119,16 +126,16 @@ export function batchHandlers(config: AppConfig, service: EnrichmentService) {
   };
 
   const get: RequestHandler = async (req, res) => {
-    const { batch, results, views } = await loadBatchWithViews(service, String(req.params.id));
+    const { batch, results, views } = await loadBatchWithViews(service, String(req.params.id), 'summary');
     res.json({ data: { ...publicBatch(batch), summary: riskSummary(views), progress: providerProgress(results) } });
   };
 
   const results: RequestHandler = async (req, res) => {
     const query = resultsQuerySchema.parse(req.query);
-    const { batch, views } = await loadBatchWithViews(service, String(req.params.id));
+    const { batch, views } = await loadBatchWithViews(service, String(req.params.id), 'list');
     const { total, items } = filterItems(views, query);
     res.json({
-      data: items,
+      data: items.map(toListItem),
       meta: { total, page: query.page, pageSize: query.pageSize, summary: riskSummary(views), providers: batch.providers },
     });
   };

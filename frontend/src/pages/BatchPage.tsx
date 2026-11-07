@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { DownloadIcon, TrashIcon, XIcon, RefreshIcon } from '../components/icons';
 import { BatchStatusBadge, ErrorBanner, Notice, Page, Panel, ProgressBar, RiskGauge, Skeleton, Stat } from '../components/ui';
 import { BatchExplainer } from '../features/ai/BatchExplainer';
 import { useBatchLive } from '../features/batches/useBatchLive';
 import { DetailPanel } from '../features/results/DetailPanel';
 import { ResultsTable } from '../features/results/ResultsTable';
-import { api, type Batch, type ItemView } from '../lib/api';
+import { api, type Batch } from '../lib/api';
 import { useUser } from '../lib/auth';
 import { dateTime, duration, relativeTime, shortId } from '../lib/format';
 import { Link, navigate } from '../lib/router';
@@ -64,40 +64,12 @@ function ProviderProgressPanel({ batch }: { batch: Batch }) {
   );
 }
 
-const ALL_ITEMS_PAGE = 1000;
-/** While lookups are still arriving, refresh the full list at most this often (it can be large). */
-const ALL_ITEMS_REFRESH_MS = 10_000;
-
-/** Every indicator in the batch (all pages), for the "open all in tabs" toolbar. */
-function useAllItems(batchId: string, version: number, terminal: boolean): ItemView[] {
-  const [items, setItems] = useState<ItemView[]>([]);
-  const lastFetch = useRef(0);
-  useEffect(() => {
-    if (!terminal && Date.now() - lastFetch.current < ALL_ITEMS_REFRESH_MS) return;
-    lastFetch.current = Date.now();
-    const controller = new AbortController();
-    (async () => {
-      const all: ItemView[] = [];
-      for (let page = 1; ; page++) {
-        const r = await api.getResults(batchId, { sort: 'line', order: 'asc', page, pageSize: ALL_ITEMS_PAGE }, controller.signal);
-        all.push(...r.data);
-        if (r.data.length < ALL_ITEMS_PAGE || all.length >= r.meta.total) break;
-      }
-      if (!controller.signal.aborted) setItems(all);
-    })().catch(() => {});
-    return () => controller.abort();
-  }, [batchId, version, terminal]);
-  return items;
-}
-
 export function BatchPage({ id }: { id: string }) {
   const user = useUser();
   const { batch, error, version, reload } = useBatchLive(id);
   const [selected, setSelected] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-
-  const allItems = useAllItems(id, version, batch?.terminal ?? false);
 
   async function act(name: string, fn: () => Promise<unknown>) {
     setBusy(name);
@@ -231,7 +203,7 @@ export function BatchPage({ id }: { id: string }) {
         </div>
       </div>
 
-      <ResultsTable batch={batch} version={version} selected={selected} onSelect={setSelected} allItems={allItems} />
+      <ResultsTable batch={batch} version={version} selected={selected} onSelect={setSelected} />
 
       <BatchExplainer batchId={batch.id} terminal={batch.terminal} />
 

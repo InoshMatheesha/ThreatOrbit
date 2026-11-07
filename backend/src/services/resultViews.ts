@@ -54,6 +54,63 @@ export function toResultView(r: EnrichmentResultDoc): ResultView {
   };
 }
 
+/**
+ * Mongo projections per endpoint. The results table and the risk engine need far less
+ * than the detail view, and these documents are fetched by the hundred on every poll.
+ */
+export const RESULT_FIELDS = {
+  /** Detail view: everything. */
+  full: {},
+  /** Results table: `summary` and `tags` are still needed to answer the search box. */
+  list: { references: 0 },
+  /**
+   * Batch header: only risk levels and per-provider progress are derived, so this fetches
+   * the handful of fields the risk rules read and nothing else. Keep it in step with
+   * `signalFor` in riskEngine.ts — a metric missing here reads as absent and can change a level.
+   */
+  summary: {
+    itemIndex: 1,
+    provider: 1,
+    type: 1,
+    status: 1,
+    outcome: 1,
+    verdict: 1,
+    detections: 1,
+    abuseConfidence: 1,
+    cacheStatus: 1,
+    'metrics.totalReports': 1,
+    'metrics.pulses': 1,
+    'metrics.onlineUrls': 1,
+    'metrics.urlStatus': 1,
+    'metrics.urlCount': 1,
+  },
+} as const;
+
+/** Only the pulse count is rendered in a table cell; the rest of OTX's metrics are detail-view only. */
+function listMetrics(metrics: ResultView['metrics']) {
+  return typeof metrics?.pulses === 'number' ? { pulses: metrics.pulses } : undefined;
+}
+
+/**
+ * One row of the results table.
+ *
+ * Drops everything only the detail view renders: the per-provider risk sentences and
+ * signals, the original spellings, engine tags, references and the metrics other than the
+ * pulse count. Those are all sent in full by `GET /batches/:id/items/:index`, which the
+ * detail view requests when a row is opened, so nothing becomes unreachable. Filtering,
+ * sorting and the risk summary all run over the complete views before this trim, so the
+ * search box still matches on summaries and tags.
+ */
+export function toListItem(item: ItemView): ItemView {
+  const results: Partial<Record<ProviderId, ResultView>> = {};
+  for (const [id, r] of Object.entries(item.results) as Array<[ProviderId, ResultView]>) {
+    const metrics = listMetrics(r.metrics);
+    const { tags: _tags, references: _references, metrics: _metrics, lookedUpAt: _lookedUpAt, expiresAt: _expiresAt, ...rest } = r;
+    results[id] = { ...rest, ...(metrics ? { metrics } : {}) };
+  }
+  return { ...item, originals: [], risk: { ...item.risk, reasons: [], signals: [] }, results };
+}
+
 export function buildItemViews(batch: BatchDoc, results: EnrichmentResultDoc[], rules: RiskRules): ItemView[] {
   const byItem = new Map<number, EnrichmentResultDoc[]>();
   for (const r of results) byItem.set(r.itemIndex, [...(byItem.get(r.itemIndex) ?? []), r]);
