@@ -14,8 +14,15 @@ export type ProviderState = 'ready' | 'unconfigured' | 'disabled';
 export interface ProviderRuntime {
   adapter: ProviderAdapter;
   state: ProviderState;
+  /** Key from the server environment, if any. Keys added by administrators live in the key pool. */
   apiKey: string | null;
+  /** Combined limits of every usable key (equal to `baseLimits` with only an environment key). */
   limits: ProviderLimits;
+  /** Limits of a single key: environment overrides or the adapter's defaults. */
+  baseLimits: ProviderLimits;
+  /** Usable keys (environment + active database keys). */
+  keyCount: number;
+  disabled: boolean;
   http: ProviderHttp;
 }
 
@@ -29,6 +36,8 @@ export interface ProviderInfo {
   credentialEnv: string | null;
   signupUrl: string;
   limits: ProviderLimits;
+  /** Usable API keys. Only included for administrators. */
+  keyCount?: number;
 }
 
 export class ProviderRegistry {
@@ -39,15 +48,19 @@ export class ProviderRegistry {
       const settings = config.providers[adapter.id];
       const apiKey = settings.apiKey;
       const state: ProviderState = settings.disabled ? 'disabled' : apiKey ? 'ready' : 'unconfigured';
+      const limits: ProviderLimits = {
+        requestsPerMinute: settings.requestsPerMinute ?? adapter.defaultLimits.requestsPerMinute,
+        dailyLimit: settings.dailyLimit ?? adapter.defaultLimits.dailyLimit,
+        concurrency: adapter.defaultLimits.concurrency,
+      };
       this.runtimes.set(adapter.id, {
         adapter,
         state,
         apiKey,
-        limits: {
-          requestsPerMinute: settings.requestsPerMinute ?? adapter.defaultLimits.requestsPerMinute,
-          dailyLimit: settings.dailyLimit ?? adapter.defaultLimits.dailyLimit,
-          concurrency: adapter.defaultLimits.concurrency,
-        },
+        limits,
+        baseLimits: { ...limits },
+        keyCount: apiKey ? 1 : 0,
+        disabled: settings.disabled,
         http: createProviderHttp({
           providerName: adapter.name,
           allowedHosts: adapter.allowedHosts,
@@ -62,6 +75,14 @@ export class ProviderRegistry {
     const runtime = this.runtimes.get(id);
     if (!runtime) throw new Error(`Unknown provider ${id}`);
     return runtime;
+  }
+
+  /** Apply the current key pool: a provider is ready when it has at least one usable key. */
+  applyPool(id: ProviderId, keyCount: number, limits: ProviderLimits) {
+    const runtime = this.get(id);
+    runtime.keyCount = keyCount;
+    runtime.limits = keyCount > 0 ? limits : { ...runtime.baseLimits };
+    runtime.state = runtime.disabled ? 'disabled' : keyCount > 0 ? 'ready' : 'unconfigured';
   }
 
   all(): ProviderRuntime[] {

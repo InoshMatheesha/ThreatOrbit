@@ -35,6 +35,15 @@ export class MemoryLookupQueue implements LookupQueue {
     }
   }
 
+  updateLimits(limits: Map<ProviderId, ProviderLimits>) {
+    for (const [id, l] of limits) {
+      const lane = this.lanes.get(id);
+      if (!lane) continue;
+      lane.limits = l;
+      this.pump(id);
+    }
+  }
+
   async enqueue(jobs: LookupJob[], delayMs = 0) {
     for (const job of jobs) {
       if (delayMs > 0) {

@@ -186,6 +186,40 @@ describe('VirusTotal adapter', () => {
     );
     expect(await lookup('example.com', 'domain')).toMatchObject({ outcome: 'found', verdict: 'no_detections' });
   });
+
+  it('reports when the indicator was last analysed, so a finished reanalysis can be recognised', async () => {
+    const { lookup } = harness(virusTotal, () =>
+      jsonResponse(200, { data: { id: 'x', attributes: { last_analysis_date: 1_700_000_000, last_analysis_stats: { harmless: 1 } } } }),
+    );
+    expect(await lookup('8.8.8.8', 'ipv4')).toMatchObject({ analysedAt: '2023-11-14T22:13:20.000Z' });
+  });
+
+  it('requests a rescan with one POST per indicator type, and never submits unknown indicators', async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    const http = createProviderHttp({
+      providerName: 'VirusTotal',
+      allowedHosts: virusTotal.allowedHosts,
+      timeoutMs: 1000,
+      fetchImpl: async (url, init) => {
+        calls.push({ url, method: init?.method ?? 'GET' });
+        return url.includes('/files/')
+          ? jsonResponse(404, { error: { code: 'NotFoundError' } })
+          : jsonResponse(200, { data: { type: 'analysis', id: 'u-abc-123' } });
+      },
+    });
+    const ctx = { apiKey: 'k3y', http };
+    expect(await virusTotal.reanalyse!({ value: '8.8.8.8', type: 'ipv4' }, ctx)).toEqual({ kind: 'submitted' });
+    expect(await virusTotal.reanalyse!({ value: 'example.com', type: 'domain' }, ctx)).toEqual({ kind: 'submitted' });
+    expect(await virusTotal.reanalyse!({ value: 'https://example.com/a', type: 'url' }, ctx)).toEqual({ kind: 'submitted' });
+    const missing = await virusTotal.reanalyse!({ value: 'a'.repeat(64), type: 'sha256' }, ctx);
+    expect(missing).toMatchObject({ kind: 'final', finding: { outcome: 'not_found' } });
+    expect(calls).toEqual([
+      { url: 'https://www.virustotal.com/api/v3/ip_addresses/8.8.8.8/analyse', method: 'POST' },
+      { url: 'https://www.virustotal.com/api/v3/domains/example.com/analyse', method: 'POST' },
+      { url: `https://www.virustotal.com/api/v3/urls/${vtUrlId('https://example.com/a')}/analyse`, method: 'POST' },
+      { url: `https://www.virustotal.com/api/v3/files/${'a'.repeat(64)}/analyse`, method: 'POST' },
+    ]);
+  });
 });
 
 describe('AbuseIPDB adapter', () => {

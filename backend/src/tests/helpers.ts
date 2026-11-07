@@ -4,7 +4,7 @@ import { createApp } from '../app.js';
 import { loadConfig } from '../config/env.js';
 import { DEFAULT_RISK_RULES } from '../config/riskRules.js';
 import { ProviderRegistry } from '../providers/registry.js';
-import type { ProviderAdapter, ProviderFinding } from '../providers/types.js';
+import type { LookupContext, ProviderAdapter, ProviderFinding } from '../providers/types.js';
 import type { ProviderId } from '../config/env.js';
 import { hashPassword } from '../lib/password.js';
 import { User, type Role } from '../models/User.js';
@@ -21,7 +21,7 @@ export function testApp(env: Record<string, string> = {}) {
   return { app: createApp(config, silentLogger), config };
 }
 
-export type LookupImpl = (indicator: { value: string; type: IndicatorType }) => Promise<ProviderFinding>;
+export type LookupImpl = (indicator: { value: string; type: IndicatorType }, ctx: LookupContext) => Promise<ProviderFinding>;
 
 export function finding(overrides: Partial<ProviderFinding> = {}): ProviderFinding {
   return { outcome: 'found', verdict: 'no_detections', summary: 'ok', metrics: {}, tags: [], references: [], ...overrides };
@@ -47,9 +47,9 @@ export function fakeAdapter(
     probe: { value: '8.8.8.8', type: 'ipv4' },
     calls,
     impl,
-    lookup(indicator) {
+    lookup(indicator, ctx) {
       calls.push(indicator.value);
-      return adapter.impl(indicator);
+      return adapter.impl(indicator, ctx);
     },
   };
   return adapter;

@@ -56,7 +56,12 @@ export interface ProviderFinding {
   tags: string[];
   references: Reference[];
   permalink?: string;
+  /** When the provider last analysed the indicator (ISO). Used to recognise a finished reanalysis; not stored. */
+  analysedAt?: string;
 }
+
+/** Answer to a reanalysis request: accepted (check back later), or a final finding (e.g. the provider has no record). */
+export type ReanalysisRequest = { kind: 'submitted' } | { kind: 'final'; finding: ProviderFinding };
 
 export interface IndicatorRef {
   value: string;
@@ -76,14 +81,9 @@ export interface ProviderHttp {
   ): Promise<HttpResponse>;
 }
 
-export interface LookupOptions {
-  includeReanalysis?: boolean;
-}
-
 export interface LookupContext {
   apiKey: string;
   http: ProviderHttp;
-  options?: LookupOptions;
 }
 
 export interface ProviderLimits {
@@ -107,4 +107,9 @@ export interface ProviderAdapter {
   /** Indicator used by the "test key" action. */
   probe: IndicatorRef;
   lookup(indicator: IndicatorRef, ctx: LookupContext): Promise<ProviderFinding>;
+  /**
+   * Optional: ask the provider to analyse an indicator it already knows again. The fresh
+   * result is read later with lookup(); one request per call, so rate limits stay exact.
+   */
+  reanalyse?(indicator: IndicatorRef, ctx: LookupContext): Promise<ReanalysisRequest>;
 }

@@ -28,10 +28,11 @@ interface Props {
   version: number;
   selected: number | null;
   onSelect: (index: number) => void;
-  batchIpItems?: ItemView[];
+  /** Every indicator in the batch, for opening them all in provider tabs. */
+  allItems?: ItemView[];
 }
 
-export function ResultsTable({ batch, version, selected, onSelect, batchIpItems }: Props) {
+export function ResultsTable({ batch, version, selected, onSelect, allItems }: Props) {
   const [query, setQuery] = useState<ResultsQuery>({ sort: 'risk', order: 'desc', page: 1, pageSize: PAGE_SIZE });
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<ItemView[] | null>(null);
@@ -63,8 +64,8 @@ export function ResultsTable({ batch, version, selected, onSelect, batchIpItems 
   const page = query.page ?? 1;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // Determine candidate IPs: prefer whole-batch list if available, otherwise current table rows
-  const ipSource = batchIpItems && batchIpItems.length > 0 ? batchIpItems : (rows ?? []);
+  // The whole batch once loaded; until then, the rows on screen.
+  const tabSource = allItems && allItems.length > 0 ? allItems : (rows ?? []);
 
   return (
     <section className="card overflow-hidden">
@@ -167,8 +168,7 @@ export function ResultsTable({ batch, version, selected, onSelect, batchIpItems 
         </div>
       </div>
 
-      {/* Dynamic bulk verification interface for IP addresses */}
-      <BulkVerify items={ipSource} variant="bar" />
+      <BulkVerify items={tabSource} />
 
       {error && (
         <div className="p-4">

@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { ExternalIcon, ServerIcon, SparklesIcon } from '../components/icons';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { ExternalIcon, KeyIcon, ServerIcon, SparklesIcon } from '../components/icons';
 import { ErrorBanner, Notice, Page, Skeleton, Spinner } from '../components/ui';
 import { AiSettingsCard } from '../features/ai/AiSettingsCard';
+import { ProviderKeysCard } from '../features/providers/ProviderKeysCard';
 import { api, TYPE_LABELS, type Health, type ProviderInfo } from '../lib/api';
 import { useUser } from '../lib/auth';
 
@@ -80,6 +81,14 @@ function ProviderCard({ p, canTest }: { p: ProviderInfo; canTest: boolean }) {
           <span className="text-muted">Speed</span>
           <span className="font-medium tabular-nums">{p.limits.requestsPerMinute}/min</span>
         </div>
+        {p.keyCount !== undefined && p.keyCount > 0 && (
+          <div className="flex items-baseline justify-between text-[12px]">
+            <span className="text-muted">API keys</span>
+            <span className="font-medium tabular-nums">
+              {p.keyCount} {p.keyCount === 1 ? 'key' : 'keys in parallel'}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="mt-auto pt-4">
@@ -90,7 +99,7 @@ function ProviderCard({ p, canTest }: { p: ProviderInfo; canTest: boolean }) {
                 <Spinner /> Testing…
               </>
             ) : (
-              'Test key'
+              `Test ${p.keyCount !== undefined && p.keyCount > 1 ? `all ${p.keyCount} keys` : 'key'}`
             )}
           </button>
         )}
@@ -108,7 +117,8 @@ function ProviderCard({ p, canTest }: { p: ProviderInfo; canTest: boolean }) {
             )}
             {p.credentialEnv && (
               <div className="text-muted">
-                Set <code className="font-mono text-[11px]">{p.credentialEnv}</code>
+                {canTest ? 'Add a key below, or set ' : 'An administrator can add a key, or set '}
+                <code className="font-mono text-[11px]">{p.credentialEnv}</code>
               </div>
             )}
           </div>
@@ -150,10 +160,21 @@ export function ProvidersPage() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
+  // After keys change, provider state, combined limits and key counts change too.
+  const reloadProviders = useCallback(() => {
+    api
+      .providers()
+      .then((p) => setProviders(p.data))
+      .catch((e: Error) => setError(e.message));
+  }, []);
+
   const e = health?.enrichment;
   const ai = health?.ai;
   return (
-    <Page title="Sources" subtitle="Where ThreatOrbit gets its answers. API keys are held by the server and never sent to the browser.">
+    <Page
+      title="Sources"
+      subtitle="Where ThreatOrbit gets its answers. API keys are held by the server, stored encrypted, and never sent to the browser."
+    >
       {error && <ErrorBanner>{error}</ErrorBanner>}
       {isAdmin && e && (e.database.mode === 'embedded' || e.queue.mode === 'memory') && (
         <Notice tone="warn">
@@ -191,6 +212,16 @@ export function ProvidersPage() {
         )}
       </Section>
 
+      {isAdmin && providers && (
+        <Section
+          icon={<KeyIcon size={16} />}
+          title="API keys"
+          hint="Administrators only. More keys per source means more lookups per minute."
+        >
+          <ProviderKeysCard providers={providers} onChange={reloadProviders} />
+        </Section>
+      )}
+
       <Section
         icon={<SparklesIcon size={16} />}
         title="AI assistant"
@@ -200,8 +231,9 @@ export function ProvidersPage() {
       </Section>
 
       <p className="text-[12px] text-muted">
-        Threat source keys are server environment variables; after changing one, redeploy. Lookups only read existing reports: nothing is
-        uploaded or submitted for new analysis.
+        Keys from server environment variables change only on redeploy; keys added here apply within seconds. Lookups only read existing
+        reports and nothing is uploaded. The one exception is the opt-in Include Reanalysis option, which asks VirusTotal to rescan
+        indicators it already knows.
       </p>
     </Page>
   );

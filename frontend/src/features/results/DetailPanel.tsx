@@ -41,6 +41,7 @@ function SafeLink({ href, children }: { href: string; children: React.ReactNode 
 }
 
 const METRIC_LABELS: Record<string, string> = {
+  reanalysis: 'Reanalysis',
   reputation: 'Reputation',
   lastAnalysis: 'Last analysis',
   country: 'Country',

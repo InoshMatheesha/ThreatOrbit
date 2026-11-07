@@ -22,6 +22,8 @@ export interface LookupQueue {
   readonly mode: QueueMode;
   start(processor: LookupProcessor, limits: Map<ProviderId, ProviderLimits>): Promise<void>;
   enqueue(jobs: LookupJob[], delayMs?: number): Promise<void>;
+  /** Apply new per-provider limits (e.g. API keys were added or removed) without a restart. */
+  updateLimits(limits: Map<ProviderId, ProviderLimits>): void;
   /** Drop waiting/delayed jobs for a batch. The processor also re-checks batch state. */
   cancelBatch(batchId: string): Promise<void>;
   close(): Promise<void>;

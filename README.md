@@ -154,7 +154,8 @@ ThreatOrbit deploys to **Vercel** with **MongoDB Atlas**. Both offer free tiers 
    |---|---|
    | `MONGODB_URI` | Connection string from step 1 |
    | `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` | First administrator account (password of at least 12 characters) |
-   | `VIRUSTOTAL_API_KEY`, `ABUSEIPDB_API_KEY`, `OTX_API_KEY`, `URLHAUS_AUTH_KEY` | Provider API keys |
+   | `ENCRYPTION_KEY` | At least 32 random characters, e.g. `openssl rand -base64 48`. Encrypts API keys stored in the database. Keep it: changing it makes stored keys unreadable |
+   | `VIRUSTOTAL_API_KEY`, `ABUSEIPDB_API_KEY`, `OTX_API_KEY`, `URLHAUS_AUTH_KEY` (optional) | Provider API keys. More keys can be added later on the Sources page |
    | `CRON_SECRET` (optional) | Random string of at least 16 characters, used for background processing |
    | `ANTHROPIC_API_KEY` (optional) | Not needed for Gemini. Plain-English explanations are normally switched on from the Sources page after signing in |
 
@@ -211,6 +212,8 @@ All settings are environment variables. [`backend/.env.example`](backend/.env.ex
 |---|---|
 | `MONGODB_URI` | MongoDB connection string |
 | `QUEUE_MODE` | `database` on Vercel (set automatically). Self-hosted `auto` uses BullMQ when `REDIS_URL` is reachable, otherwise an in-process queue |
+| `ENCRYPTION_KEY` | Required to store API keys in the database (provider key pool, AI key). At least 32 characters. In development a key file is generated under `backend/.data/` when unset |
+| `REANALYSIS_POLL_MS`, `REANALYSIS_MAX_WAIT_MS` | VirusTotal reanalysis: time between checks for the fresh result (default 45 s) and the longest wait before the latest analysis is used (default 4 minutes) |
 | `CRON_SECRET` | Enables `/api/cron/tick` for an external scheduler |
 | `TICK_BUDGET_MS` | Processing time per queue tick (default 20 seconds) |
 | `TRUST_PROXY` | Number of proxies in front of the application (set automatically on Vercel) |
@@ -236,6 +239,14 @@ For results VirusTotal marks malicious, the detail view also shows whether the S
 
 A provider without a key is shown as unconfigured and is never called.
 
+### API key pools and parallel lookups
+
+Administrators can add any number of keys per provider on the **Sources** page, next to the environment key. Lookups rotate across every key, run in parallel (one worker per key), and each key keeps its own per-minute and daily limits, so three free VirusTotal keys give 12 lookups per minute instead of 4. A key the provider rejects is taken out of rotation; a key that is rate limited or out of quota is held back while the others continue. Keys are encrypted with `ENCRYPTION_KEY` before they are stored and are never shown again.
+
+### VirusTotal reanalysis
+
+Ticking **Include Reanalysis** when starting a batch asks VirusTotal to rescan each indicator it already knows and returns the fresh analysis instead of the last stored one. It is slower and uses about 2 to 3 requests per indicator. Unknown indicators are never submitted. For URLs and domains, a rescan makes scanners contact the target, which its operator may notice.
+
 ## Risk model
 
 Default rules are defined in `backend/src/config/riskRules.ts` and can be overridden by pointing `RISK_RULES_PATH` at a JSON file, for example `{ "abuseipdb": { "high": 90 } }`. The strongest provider signal determines the level, and each provider is assessed on its own scale.
@@ -258,7 +269,7 @@ Default rules are defined in `backend/src/config/riskRules.ts` and can be overri
 | Authentication | scrypt password hashing; server-side sessions storing only token hashes; `httpOnly`, `Secure`, `SameSite=Lax` cookies with the `__Host-` prefix; account lockout after 5 failed attempts; per-IP sign-in rate limiting; sessions revoked on password reset, deactivation or role change |
 | Authorization | Every route except health and sign-in requires a session. Role checks are enforced server-side |
 | Request integrity | Cross-origin state-changing requests are rejected in addition to SameSite protection |
-| Secrets | Provider keys exist only as server environment variables and are never sent to the browser, logged or stored. Automated tests verify this across all endpoints |
+| Secrets | API keys are never sent to the browser or logged. Keys added in the app are encrypted with AES-256-GCM (key from `ENCRYPTION_KEY`, never stored in the database) and bound to their record, so a database dump alone reveals none of them. Key management is restricted to administrators. Automated tests verify this across all endpoints |
 | Outbound requests | HTTPS only, restricted to each provider's allowlisted host, redirects refused, hard timeouts |
 | Application hardening | Strict Content Security Policy and security headers, schema validation on every request, upload size, type and encoding checks |
 | AI explanations | Opt-in, behind sign-in, capped per day. The key is set by administrators only, checked with the provider before saving, and never sent back to the browser (only its last four characters). Outside-service text is passed as quoted data and the reply is validated against a schema, so a hostile indicator cannot steer the model or add entries. Output is rendered as plain text |

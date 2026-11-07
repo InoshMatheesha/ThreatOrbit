@@ -20,14 +20,14 @@ import {
   type LookupCounters,
   type ProviderSnapshot,
 } from '../models/index.js';
+import { vaultFor } from '../lib/crypto.js';
 import type { ParseResult } from '../parser/types.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { isRetryableKind, ProviderError, type ErrorKind, type ProviderFinding, type ProviderLimits } from '../providers/types.js';
 import type { LookupJob, LookupQueue, ProcessOutcome } from '../queue/types.js';
 import { audit } from './audit.js';
 import type { Principal } from './authService.js';
-import { ProviderKeyService } from './providerKeyService.js';
-import { reserveRequest } from './providerUsage.js';
+import { ProviderKeyService, type PoolKey } from './providerKeyService.js';
 
 /** A 429 asking us to wait longer than this is a quota, not a burst limit. */
 const QUOTA_RETRY_AFTER_MS = 10 * 60_000;
@@ -38,6 +38,12 @@ const RETENTION_INTERVAL_MS = 60 * 60_000;
 const MAX_LINES_PER_ITEM = 100;
 const MAX_ORIGINALS_PER_ITEM = 20;
 const NOT_RETRYABLE_BY_USER: ReadonlySet<ErrorKind> = new Set(['invalid_request']);
+/** Provider and server clocks differ slightly; an analysis this close before the request still counts as the new one. */
+const REANALYSIS_CLOCK_SKEW_MS = 30_000;
+
+function msUntilUtcMidnight(now = Date.now()): number {
+  return 86_400_000 - (now % 86_400_000);
+}
 
 export interface CreateBatchOptions {
   actor: Principal;
@@ -73,16 +79,12 @@ export class EnrichmentService {
   private refreshChains = new Map<string, Promise<void>>();
   private timers: NodeJS.Timeout[] = [];
 
+  /** API key pools per provider (environment key plus keys added by administrators). */
   readonly keyService: ProviderKeyService;
+  private started = false;
 
   constructor(private readonly deps: EnrichmentDeps) {
-    this.keyService =
-      deps.keyService ??
-      new ProviderKeyService(
-        deps.config,
-        deps.logger,
-        deps.registry.all().map((r) => r.adapter),
-      );
+    this.keyService = deps.keyService ?? new ProviderKeyService(deps.config, deps.logger, deps.registry, vaultFor(deps.config));
   }
 
   get queueMode() {
@@ -103,12 +105,9 @@ export class EnrichmentService {
    *   where other instances may be mid-lookup; the database queue recovers stale ones itself.
    */
   async start({ background = true, recover = true } = {}) {
-    const limits = new Map<ProviderId, ProviderLimits>();
-    for (const r of this.deps.registry.all()) {
-      const eff = await this.keyService.getEffectiveLimits(r.adapter.id, r.limits);
-      limits.set(r.adapter.id, eff);
-    }
+    const limits = await this.refreshProviders();
     await this.deps.queue.start((job) => this.processLookup(job), limits);
+    this.started = true;
     if (recover) await this.recoverInterrupted();
     if (background) {
       this.timers.push(setInterval(() => void this.sweep(), SWEEP_INTERVAL_MS).unref());
@@ -120,6 +119,21 @@ export class EnrichmentService {
   async stop() {
     for (const t of this.timers) clearInterval(t);
     await this.deps.queue.close();
+  }
+
+  /**
+   * Re-read the key pools: a provider with at least one usable key is ready, and the queue
+   * runs at the pool's combined limits (one worker per key). Cheap: pools are cached briefly.
+   */
+  async refreshProviders(): Promise<Map<ProviderId, ProviderLimits>> {
+    const limits = new Map<ProviderId, ProviderLimits>();
+    for (const runtime of this.deps.registry.all()) {
+      const pool = await this.keyService.summary(runtime.adapter.id);
+      this.deps.registry.applyPool(runtime.adapter.id, pool.keyCount, pool.limits);
+      limits.set(runtime.adapter.id, { ...runtime.limits });
+    }
+    if (this.started) this.deps.queue.updateLimits(limits);
+    return limits;
   }
 
   // ---------------------------------------------------------------- batches
@@ -136,12 +150,13 @@ export class EnrichmentService {
 
   async createBatch(parsed: ParseResult, opts: CreateBatchOptions): Promise<BatchDoc> {
     const { config, registry, queue, logger } = this.deps;
+    await this.refreshProviders();
     const providers = registry.ready();
     if (providers.length === 0) {
       throw new ApiError(
         409,
         'NO_PROVIDERS_CONFIGURED',
-        'No threat intel provider is configured. Add provider API keys to the server environment and restart it.',
+        'No threat intel provider is configured. An administrator can add API keys on the Sources page.',
       );
     }
 
@@ -192,7 +207,8 @@ export class EnrichmentService {
       for (const item of targets) {
         const base = { batchId, itemIndex: item.index, type: item.type, value: item.value, provider: id };
         const hit = cache.get(`${item.type}:${item.value}`);
-        if (hit && (!opts.includeReanalysis || id !== 'virustotal')) {
+        // A reanalysis must ask the provider again, so its cached result is not reused.
+        if (hit && !(opts.includeReanalysis && runtime.adapter.reanalyse)) {
           cachedCount++;
           docs.push({
             ...base,
@@ -288,7 +304,9 @@ export class EnrichmentService {
           _id: '$status',
           n: { $sum: 1 },
           cached: { $sum: { $cond: [{ $eq: ['$cacheStatus', 'hit'] }, 1, 0] } },
-          attempted: { $sum: { $cond: [{ $gt: ['$attempts', 0] }, 1, 0] } },
+          attempted: {
+            $sum: { $cond: [{ $or: [{ $gt: ['$attempts', 0] }, { $ifNull: ['$reanalysis.requestedAt', false] }] }, 1, 0] },
+          },
         },
       },
     ]);
@@ -398,7 +416,7 @@ export class EnrichmentService {
     const ids = results.map((r) => r._id);
     await EnrichmentResult.updateMany(
       { _id: { $in: ids }, status: 'failed' },
-      { $set: { status: 'queued', attempts: 0 }, $unset: { error: 1, nextAttemptAt: 1 } },
+      { $set: { status: 'queued', attempts: 0 }, $unset: { error: 1, nextAttemptAt: 1, reanalysis: 1 } },
     );
     await this.deps.queue.enqueue(results.map((r) => ({ resultId: String(r._id), batchId: r.batchId, provider: r.provider, attempt: 1 })));
     for (const batchId of new Set(results.map((r) => r.batchId))) await this.refreshBatch(batchId);
@@ -435,34 +453,71 @@ export class EnrichmentService {
       }
 
       const runtime = registry.get(job.provider);
-      let keyHandle: { apiKey: string; release: () => void } | null = null;
-      try {
-        keyHandle = await this.keyService.acquireKey(job.provider, runtime.apiKey);
-      } catch {
-        if (runtime.apiKey) {
-          keyHandle = { apiKey: runtime.apiKey, release: () => {} };
-        }
-      }
-
-      if (!keyHandle || !keyHandle.apiKey) {
-        await this.fail(claimed._id, 'auth', `${runtime.adapter.name} is ${runtime.state}; add its API key and retry`);
+      const name = runtime.adapter.name;
+      if (runtime.state === 'disabled') {
+        await this.fail(claimed._id, 'auth', `${name} is disabled on this server`);
         return { kind: 'done' };
       }
-      if (!(await reserveRequest(job.provider, runtime.limits.dailyLimit))) {
-        keyHandle.release();
+
+      // Take a key from the pool; this also counts the request against that key's limits.
+      const grant = await this.keyService.acquire(job.provider);
+      if (grant.kind === 'no_keys') {
+        await this.fail(claimed._id, 'auth', `${name} has no usable API key; an administrator can add one on the Sources page, then retry`);
+        return { kind: 'done' };
+      }
+      if (grant.kind === 'quota_exhausted') {
         await this.fail(
           claimed._id,
           'quota_exhausted',
-          `Daily quota of ${runtime.limits.dailyLimit} ${runtime.adapter.name} requests used up; it resets at 00:00 UTC. Retry then.`,
+          grant.keys > 1
+            ? `Every ${name} API key used its daily quota; quotas reset at 00:00 UTC. Retry then, or add another key.`
+            : `Daily quota of ${runtime.limits.dailyLimit} ${name} requests used up; it resets at 00:00 UTC. Retry then.`,
         );
         return { kind: 'done' };
       }
+      if (grant.kind === 'rate_limited') {
+        // Every key is at its per-minute limit: wait for the next window without using up an attempt.
+        return this.postpone(claimed._id, grant.retryInMs, { pauseProvider: true });
+      }
+
+      const key = grant.key;
+      const ctx = { apiKey: key.apiKey, http: runtime.http };
+      const indicator = { value: claimed.value, type: claimed.type };
+      const { pollMs, maxWaitMs } = config.enrichment.reanalysis;
+      const wantsReanalysis = Boolean(batch.includeReanalysis && runtime.adapter.reanalyse);
 
       try {
-        const finding = await runtime.adapter.lookup(
-          { value: claimed.value, type: claimed.type },
-          { apiKey: keyHandle.apiKey, http: runtime.http, options: { includeReanalysis: batch?.includeReanalysis } },
-        );
+        let finding: ProviderFinding;
+        let reanalysisNote: string | null = null;
+
+        if (wantsReanalysis && !claimed.reanalysis?.requestedAt) {
+          // Phase 1: ask for a rescan, then come back for the fresh result (one request per pass).
+          const request = await runtime.adapter.reanalyse!(indicator, ctx);
+          if (request.kind === 'submitted') {
+            return this.postpone(claimed._id, pollMs, { reanalysis: { requestedAt: new Date(), checks: 0 } });
+          }
+          finding = request.finding;
+          reanalysisNote = `Not possible: ${name} has no record to rescan`;
+        } else {
+          finding = await runtime.adapter.lookup(indicator, ctx);
+          if (claimed.reanalysis?.requestedAt) {
+            // Phase 2: is the analysis newer than the request yet?
+            const requestedAt = new Date(claimed.reanalysis.requestedAt).getTime();
+            const analysedAt = finding.analysedAt ? Date.parse(finding.analysedAt) : NaN;
+            const fresh = analysedAt >= requestedAt - REANALYSIS_CLOCK_SKEW_MS;
+            const waited = Date.now() - requestedAt;
+            if (!fresh && finding.outcome === 'found' && waited + pollMs <= maxWaitMs) {
+              return this.postpone(claimed._id, pollMs, {
+                reanalysis: { requestedAt: claimed.reanalysis.requestedAt, checks: (claimed.reanalysis.checks ?? 0) + 1 },
+              });
+            }
+            reanalysisNote = fresh
+              ? 'Fresh analysis (rescanned for this batch)'
+              : `Requested, but ${name} had not finished within ${Math.max(1, Math.round(maxWaitMs / 60_000))} min; latest analysis shown`;
+          }
+        }
+
+        if (reanalysisNote) finding = { ...finding, metrics: { ...finding.metrics, reanalysis: reanalysisNote } };
         const now = new Date();
         await EnrichmentResult.updateOne(
           { _id: claimed._id, status: 'running' },
@@ -474,7 +529,7 @@ export class EnrichmentService {
               expiresAt: new Date(now.getTime() + config.enrichment.cacheTtlMs),
               cacheStatus: 'miss',
             },
-            $unset: { error: 1 },
+            $unset: { error: 1, nextAttemptAt: 1 },
           },
         );
         return { kind: 'done' };
@@ -483,6 +538,15 @@ export class EnrichmentService {
         let kind = e.kind;
         const retryAfter = e.options.retryAfterMs;
         if (kind === 'rate_limited' && retryAfter !== undefined && retryAfter > QUOTA_RETRY_AFTER_MS) kind = 'quota_exhausted';
+
+        // With several keys, a rejected, throttled or exhausted key is that key's problem: rotate.
+        if (
+          (kind === 'auth' || kind === 'rate_limited' || kind === 'quota_exhausted') &&
+          (await this.rotateAway(key, kind, e.message, retryAfter))
+        ) {
+          logger.warn({ provider: job.provider, kind, keyId: key.id }, 'Key unavailable; lookup moved to another key');
+          return this.postpone(claimed._id, 0, {});
+        }
 
         if (isRetryableKind(kind) && claimed.attempts < config.enrichment.maxAttempts) {
           const delayMs = kind === 'rate_limited' ? (retryAfter ?? DEFAULT_RATE_LIMIT_WAIT_MS) : this.backoff(claimed.attempts);
@@ -506,8 +570,6 @@ export class EnrichmentService {
         }
         await this.fail(claimed._id, kind, e.message, e.options.httpStatus);
         return { kind: 'done' };
-      } finally {
-        keyHandle.release();
       }
     } catch (err) {
       // Database or programming error: record it so the batch can still finish.
@@ -517,6 +579,39 @@ export class EnrichmentService {
     } finally {
       await this.refreshBatch(job.batchId);
     }
+  }
+
+  /**
+   * Hand a claimed lookup back to the queue without spending an attempt: waiting for a
+   * rate-limit window, for a reanalysis to finish, or for another key.
+   */
+  private async postpone(
+    id: Types.ObjectId,
+    delayMs: number,
+    opts: { pauseProvider?: boolean; reanalysis?: { requestedAt: Date; checks: number } },
+  ): Promise<ProcessOutcome> {
+    await EnrichmentResult.updateOne(
+      { _id: id, status: 'running' },
+      {
+        $set: {
+          status: 'queued',
+          nextAttemptAt: new Date(Date.now() + delayMs),
+          ...(opts.reanalysis ? { reanalysis: opts.reanalysis } : {}),
+        },
+        $inc: { attempts: -1 },
+      },
+    );
+    return { kind: 'retry', delayMs, ...(opts.pauseProvider && delayMs > 0 ? { pauseProviderMs: delayMs } : {}) };
+  }
+
+  /** Take a failing key out of rotation when other keys can carry on. False when it is the only one. */
+  private async rotateAway(key: PoolKey, kind: ErrorKind, message: string, retryAfter: number | undefined): Promise<boolean> {
+    const pool = await this.keyService.pool(key.provider);
+    if (pool.length < 2) return false;
+    if (kind === 'auth') await this.keyService.markRejected(key, message);
+    else
+      await this.keyService.pauseKey(key, kind === 'quota_exhausted' ? msUntilUtcMidnight() : (retryAfter ?? DEFAULT_RATE_LIMIT_WAIT_MS));
+    return true;
   }
 
   private backoff(attempt: number): number {
@@ -595,34 +690,42 @@ export class EnrichmentService {
   async tick(budgetMs: number) {
     const { queue } = this.deps;
     if (!queue.drain) return null;
+    // Another instance may have added or removed keys: run at the current pool's limits.
+    await this.refreshProviders();
     const result = await queue.drain(budgetMs);
     if (await acquireLock('retention-purge', RETENTION_INTERVAL_MS)) await this.purgeExpired();
     return result;
   }
 
-  /** Make one real request with a harmless indicator to check the key works. */
+  /** Test every usable key of a provider with one harmless request each. */
   async testProvider(id: ProviderId, actor: Principal) {
+    await this.refreshProviders();
     const runtime = this.deps.registry.get(id);
-    if (runtime.state !== 'ready' || !runtime.apiKey) {
-      return { ok: false, state: runtime.state, message: `${runtime.adapter.name} is ${runtime.state}` };
-    }
-    if (!(await reserveRequest(id, runtime.limits.dailyLimit))) {
-      return { ok: false, state: runtime.state, message: 'Daily quota used up' };
+    const pool = runtime.state === 'ready' ? await this.keyService.pool(id) : [];
+    if (pool.length === 0) {
+      return {
+        ok: false,
+        state: runtime.state,
+        message: `${runtime.adapter.name} is ${runtime.state === 'ready' ? 'unconfigured' : runtime.state}`,
+      };
     }
     const started = Date.now();
-    try {
-      const finding = await runtime.adapter.lookup(runtime.adapter.probe, { apiKey: runtime.apiKey, http: runtime.http });
-      await audit(this.deps.logger, 'provider.test', actor, undefined, { provider: id, ok: true });
-      return {
-        ok: true,
-        state: runtime.state,
-        message: `Key works. Test lookup of ${runtime.adapter.probe.value}: ${finding.summary}`,
-        ms: Date.now() - started,
-      };
-    } catch (err) {
-      const e = err instanceof ProviderError ? err : new ProviderError('provider_error', (err as Error).message);
-      await audit(this.deps.logger, 'provider.test', actor, undefined, { provider: id, ok: false, kind: e.kind });
-      return { ok: false, state: runtime.state, kind: e.kind, message: e.message, ms: Date.now() - started };
+    const results: Array<{ key: PoolKey; ok: boolean; message: string; kind?: string }> = [];
+    for (const key of pool) results.push({ key, ...(await this.keyService.test(key.id, actor)) });
+    await this.refreshProviders();
+    const ms = Date.now() - started;
+    const failed = results.filter((r) => !r.ok);
+    if (results.length === 1) {
+      const only = results[0]!;
+      return { ok: only.ok, state: runtime.state, message: only.message, ms, ...(only.kind ? { kind: only.kind } : {}) };
     }
+    if (failed.length === 0) return { ok: true, state: runtime.state, message: `All ${results.length} keys work.`, ms };
+    return {
+      ok: false,
+      state: runtime.state,
+      ...(failed[0]!.kind ? { kind: failed[0]!.kind } : {}),
+      message: `${results.length - failed.length} of ${results.length} keys work. ${failed.map((f) => `${f.key.label}: ${f.message}`).join(' ')}`,
+      ms,
+    };
   }
 }

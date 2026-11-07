@@ -1,5 +1,7 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
+import { loadConfig } from '../config/env.js';
+import { vaultFor, type EncryptedSecret } from '../lib/crypto.js';
 import { AuditEvent, Setting } from '../models/index.js';
 import { AiClientError, type AiClient, type AiSettings, type ClientFactory } from '../services/aiService.js';
 import { useTestDatabase } from './db.js';
@@ -8,6 +10,16 @@ import { enrichmentHarness, fakeAdapter, finding, signedInAgent } from './helper
 useTestDatabase();
 
 const KEY = 'AIza-secret-gemini-key-9876';
+
+/** The stored setting: the key must only be present encrypted. Returns it decrypted for comparison. */
+async function storedSetting() {
+  const doc = await Setting.findById('ai').lean();
+  const value = (doc?.value ?? {}) as Record<string, unknown> & { apiKeyEnc?: EncryptedSecret };
+  expect(JSON.stringify(doc)).not.toContain(KEY);
+  expect(value.apiKey).toBeUndefined();
+  const apiKey = value.apiKeyEnc ? vaultFor(loadConfig({ NODE_ENV: 'test' })).decrypt(value.apiKeyEnc, 'setting:ai') : null;
+  return { ...value, apiKey };
+}
 
 function fakeFactory(options: { models?: string[]; reject?: boolean } = {}) {
   const built: AiSettings[] = [];
@@ -79,8 +91,7 @@ describe('AI settings', () => {
     expect(JSON.stringify(saved.body)).not.toContain(KEY);
     expect(built.some((s) => s.apiKey === KEY && s.provider === 'gemini')).toBe(true);
 
-    const stored = await Setting.findById('ai').lean();
-    expect(stored?.value).toMatchObject({ provider: 'gemini', apiKey: KEY, model: 'gemini-2.5-flash' });
+    expect(await storedSetting()).toMatchObject({ provider: 'gemini', apiKey: KEY, model: 'gemini-2.5-flash' });
 
     expect(JSON.stringify((await admin.get('/api/settings/ai')).body)).not.toContain(KEY);
     expect(JSON.stringify((await admin.get('/api/health')).body)).not.toContain(KEY);
@@ -109,7 +120,7 @@ describe('AI settings', () => {
     const res = await admin.put('/api/settings/ai').send({ provider: 'gemini', apiKey: 'bad-key-12345' });
     expect(res.status).toBe(400);
     expect(res.body.error.message).toMatch(/rejected this key/);
-    expect((await Setting.findById('ai').lean())?.value).toMatchObject({ apiKey: KEY });
+    expect(await storedSetting()).toMatchObject({ apiKey: KEY });
   });
 
   it('changes only the model without asking for the key again, and rejects unknown models', async () => {
@@ -118,7 +129,7 @@ describe('AI settings', () => {
     const changed = await admin.put('/api/settings/ai').send({ provider: 'gemini', model: 'gemini-2.5-flash-lite' });
     expect(changed.status, JSON.stringify(changed.body)).toBe(200);
     expect(changed.body.data).toMatchObject({ model: 'gemini-2.5-flash-lite', keyHint: '...9876' });
-    expect((await Setting.findById('ai').lean())?.value).toMatchObject({ apiKey: KEY, model: 'gemini-2.5-flash-lite' });
+    expect(await storedSetting()).toMatchObject({ apiKey: KEY, model: 'gemini-2.5-flash-lite' });
 
     const unknown = await admin.put('/api/settings/ai').send({ provider: 'gemini', model: 'gemini-9-ultra' });
     expect(unknown.status).toBe(400);
@@ -167,5 +178,13 @@ describe('AI settings', () => {
     expect((await admin.put('/api/settings/ai').send({ provider: 'invalid_provider', apiKey: KEY })).status).toBe(400);
     expect((await admin.put('/api/settings/ai').send({ provider: 'gemini', apiKey: 'short' })).status).toBe(400);
     expect((await admin.put('/api/settings/ai').send({ provider: 'gemini', apiKey: KEY, extra: 1 })).status).toBe(400);
+  });
+
+  it('encrypts a key saved in plain text by an older version the first time it is read', async () => {
+    const { admin } = await setup();
+    await Setting.create({ _id: 'ai', value: { provider: 'gemini', apiKey: KEY, model: 'gemini-2.5-flash' }, updatedAt: new Date() });
+    const res = await admin.get('/api/settings/ai');
+    expect(res.body.data).toMatchObject({ configured: true, keyHint: '...9876' });
+    expect(await storedSetting()).toMatchObject({ provider: 'gemini', apiKey: KEY, model: 'gemini-2.5-flash' });
   });
 });

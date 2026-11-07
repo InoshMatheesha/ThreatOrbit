@@ -24,8 +24,7 @@ export type ErrorCode =
   | 'FORBIDDEN'
   | 'CONFLICT'
   | 'NOT_FOUND'
-  | 'DECRYPTION_FAILED'
-  | 'NO_KEY_AVAILABLE'
+  | 'ENCRYPTION_NOT_CONFIGURED'
   | 'INTERNAL_ERROR';
 
 /** Error with a stable machine-readable code, rendered as `{ error: { code, message, details? } }`. */

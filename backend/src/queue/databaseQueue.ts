@@ -1,9 +1,9 @@
 import type { Logger } from 'pino';
 import type { ProviderId } from '../config/env.js';
-import { incrementBelow } from '../lib/counter.js';
 import { EnrichmentResult } from '../models/EnrichmentResult.js';
-import { ProviderPause, ProviderWindow } from '../models/Throttle.js';
+import { ProviderPause } from '../models/Throttle.js';
 import type { ProviderLimits } from '../providers/types.js';
+import { reserveMinuteSlot } from '../services/providerUsage.js';
 import type { DrainResult, LookupJob, LookupProcessor, LookupQueue } from './types.js';
 
 /** A lookup marked running for longer than this was cut off (instance frozen or killed). */
@@ -16,7 +16,9 @@ const STALE_RUNNING_MS = 3 * 60_000;
  * processes due lookups for a limited time.
  *
  * Coordination between concurrent function instances happens in MongoDB:
- * - per-provider rate limit: an atomic per-minute counter (ProviderWindow)
+ * - per-provider rate limit: an atomic per-minute counter (ProviderWindow); each pooled
+ *   API key also has its own window, enforced when the processor takes a key
+ * - parallelism: one worker per API key (limits.concurrency)
  * - HTTP 429 back-off: a shared pause (ProviderPause)
  * - retries: `nextAttemptAt` on the result, set by the processor
  * - double processing: prevented by the processor's atomic queued -> running claim
@@ -58,52 +60,79 @@ export class DatabaseLookupQueue implements LookupQueue {
     return { processed: counts.reduce((a, b) => a + b, 0), pending };
   }
 
+  updateLimits(limits: Map<ProviderId, ProviderLimits>) {
+    this.limits = new Map(limits);
+  }
+
+  /**
+   * Run up to `concurrency` workers for one provider (one per API key in the pool).
+   * Picking the next lookup is serialized within this instance and in-flight lookups are
+   * excluded, so workers never race for the same row or waste a rate-limit slot on it.
+   * Across instances the processor's atomic claim still prevents double processing.
+   */
   private async drainProvider(provider: ProviderId, limits: ProviderLimits, deadline: number): Promise<number> {
-    const concurrency = Math.max(1, limits.concurrency || 1);
+    const concurrency = Math.max(1, limits.concurrency);
+    const inFlight = new Set<string>();
+    let stopped = false;
+    let picking: Promise<unknown> = Promise.resolve();
 
-    const runWorker = async (): Promise<number> => {
+    const pickNext = async (): Promise<LookupJob | null> => {
+      if (stopped || Date.now() >= deadline) return null;
+      const pause = await ProviderPause.findOne({ provider }).lean();
+      if (pause && pause.pausedUntil > new Date()) {
+        stopped = true;
+        return null;
+      }
+      const now = new Date();
+      const next = await EnrichmentResult.findOne(
+        {
+          provider,
+          status: 'queued',
+          ...(inFlight.size ? { _id: { $nin: [...inFlight] } } : {}),
+          $or: [{ nextAttemptAt: { $exists: false } }, { nextAttemptAt: null }, { nextAttemptAt: { $lte: now } }],
+        },
+        { _id: 1, batchId: 1, attempts: 1 },
+      )
+        .sort({ createdAt: 1 })
+        .lean();
+      if (!next) return null;
+      if (!(await reserveMinuteSlot(provider, limits.requestsPerMinute))) {
+        stopped = true;
+        return null;
+      }
+      const resultId = String(next._id);
+      inFlight.add(resultId);
+      return { resultId, batchId: next.batchId, provider, attempt: next.attempts + 1 };
+    };
+
+    const worker = async (): Promise<number> => {
       let count = 0;
-      while (Date.now() < deadline) {
-        const pause = await ProviderPause.findOne({ provider }).lean();
-        if (pause && pause.pausedUntil > new Date()) break;
-
-        const now = new Date();
-        const next = await EnrichmentResult.findOne(
-          {
-            provider,
-            status: 'queued',
-            $or: [{ nextAttemptAt: { $exists: false } }, { nextAttemptAt: null }, { nextAttemptAt: { $lte: now } }],
-          },
-          { _id: 1, batchId: 1, attempts: 1 },
-        )
-          .sort({ createdAt: 1 })
-          .lean();
-        if (!next) break;
-        if (!(await this.reserveSlot(provider, limits.requestsPerMinute))) break;
-
-        const outcome = await this.processor!({ resultId: String(next._id), batchId: next.batchId, provider, attempt: next.attempts + 1 });
-        count++;
-        if (outcome.kind === 'retry' && outcome.pauseProviderMs) {
-          await ProviderPause.updateOne(
-            { provider },
-            { $set: { pausedUntil: new Date(Date.now() + outcome.pauseProviderMs) } },
-            { upsert: true },
-          );
-          break;
+      while (!stopped) {
+        const turn = picking.then(pickNext);
+        picking = turn.catch(() => null);
+        const job = await turn;
+        if (!job) break;
+        try {
+          const outcome = await this.processor!(job);
+          count++;
+          if (outcome.kind === 'retry' && outcome.pauseProviderMs) {
+            stopped = true;
+            await ProviderPause.updateOne(
+              { provider },
+              { $set: { pausedUntil: new Date(Date.now() + outcome.pauseProviderMs) } },
+              { upsert: true },
+            );
+          }
+        } finally {
+          inFlight.delete(job.resultId);
         }
       }
       return count;
     };
 
-    const counts = await Promise.all(Array.from({ length: concurrency }, () => runWorker()));
-    const totalProcessed = counts.reduce((a, b) => a + b, 0);
-    if (totalProcessed) this.logger.debug({ provider, processed: totalProcessed, concurrency }, 'Drained lookups');
-    return totalProcessed;
-  }
-
-  /** Atomically take one request slot in the provider's current one-minute window. */
-  private reserveSlot(provider: ProviderId, perMinute: number): Promise<boolean> {
-    const minute = Math.floor(Date.now() / 60_000);
-    return incrementBelow(ProviderWindow, { provider, minute }, perMinute, { expiresAt: new Date((minute + 2) * 60_000) });
+    const counts = await Promise.all(Array.from({ length: concurrency }, worker));
+    const processed = counts.reduce((a, b) => a + b, 0);
+    if (processed) this.logger.debug({ provider, processed, workers: concurrency }, 'Drained lookups');
+    return processed;
   }
 }

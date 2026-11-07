@@ -49,38 +49,10 @@ export const virusTotal: ProviderAdapter = {
   defaultLimits: { requestsPerMinute: 4, dailyLimit: 500, concurrency: 1 },
   probe: { value: '8.8.8.8', type: 'ipv4' },
 
-  async lookup(indicator, { apiKey, http, options }): Promise<ProviderFinding> {
+  async lookup(indicator, { apiKey, http }): Promise<ProviderFinding> {
     const { api, gui } = pathFor(indicator.type, indicator.value);
-    let reanalysisRequested = false;
-
-    // VirusTotal Reanalysis Integration: if opted in, submit indicator for reanalysis
-    if (options?.includeReanalysis) {
-      try {
-        const reRes = await http.request(`${BASE}/${api}/analyse`, {
-          method: 'POST',
-          headers: { 'x-apikey': apiKey },
-        });
-        if (reRes.status === 200 || reRes.status === 201) {
-          reanalysisRequested = true;
-        }
-      } catch {
-        // Fallback to reading the latest available analysis if reanalysis is rate-limited or queued
-      }
-    }
-
     const res = await http.request(`${BASE}/${api}`, { headers: { 'x-apikey': apiKey } });
-    if (res.status === 404) {
-      return {
-        outcome: 'not_found',
-        verdict: 'unknown',
-        summary: 'Not in the VirusTotal dataset',
-        metrics: compact({
-          reanalysis: reanalysisRequested ? 'Requested' : null,
-        }),
-        tags: [],
-        references: [],
-      };
-    }
+    if (res.status === 404) return notFound();
 
     const data = obj(obj(res.body).data);
     const attrs = obj(data.attributes);
@@ -98,6 +70,7 @@ export const virusTotal: ProviderAdapter = {
         ? 'Known to VirusTotal but never analysed'
         : `${d.malicious}/${d.total} engines malicious${d.suspicious ? `, ${d.suspicious} suspicious` : ''}`;
 
+    const lastAnalysis = unixToIso(attrs.last_analysis_date);
     const categories = Object.values(obj(attrs.categories)).filter((c): c is string => typeof c === 'string');
     const threat = obj(attrs.popular_threat_classification);
 
@@ -108,9 +81,8 @@ export const virusTotal: ProviderAdapter = {
       detections: d,
       metrics: compact({
         sophos: verdict === 'malicious' ? sophosVerdict(attrs.last_analysis_results) : null,
-        reanalysis: reanalysisRequested ? 'Requested' : null,
         reputation: typeof attrs.reputation === 'number' ? attrs.reputation : null,
-        lastAnalysis: unixToIso(attrs.last_analysis_date),
+        lastAnalysis,
         country: str(attrs.country),
         asOwner: str(attrs.as_owner),
         asn: typeof attrs.asn === 'number' ? attrs.asn : null,
@@ -129,6 +101,25 @@ export const virusTotal: ProviderAdapter = {
       tags: strings(attrs.tags),
       references: [],
       permalink: `https://www.virustotal.com/gui/${gui}/${encodeURIComponent(String(data.id))}`,
+      ...(lastAnalysis ? { analysedAt: lastAnalysis } : {}),
     };
   },
+
+  /**
+   * Ask VirusTotal to rescan an indicator it already knows (POST .../analyse). Only existing
+   * records are rescanned: an unknown indicator is never submitted, it is reported as not found.
+   */
+  async reanalyse(indicator, { apiKey, http }) {
+    const { api } = pathFor(indicator.type, indicator.value);
+    const res = await http.request(`${BASE}/${api}/analyse`, { method: 'POST', headers: { 'x-apikey': apiKey } });
+    if (res.status === 404) return { kind: 'final', finding: notFound() };
+    if (obj(obj(res.body).data).type !== 'analysis') {
+      throw new ProviderError('provider_error', 'VirusTotal did not accept the reanalysis request');
+    }
+    return { kind: 'submitted' };
+  },
 };
+
+function notFound(): ProviderFinding {
+  return { outcome: 'not_found', verdict: 'unknown', summary: 'Not in the VirusTotal dataset', metrics: {}, tags: [], references: [] };
+}

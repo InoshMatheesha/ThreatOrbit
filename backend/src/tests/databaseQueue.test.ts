@@ -87,9 +87,15 @@ describe('database queue (serverless hosting)', () => {
   });
 
   it('pauses the provider for every instance after HTTP 429', async () => {
-    const vt = fakeAdapter('virustotal', ['ipv4'], async () => {
-      throw new ProviderError('rate_limited', '429', { retryAfterMs: 60_000 });
-    });
+    // One worker: with several, a lookup already in flight when the 429 arrives still completes its request.
+    const vt = fakeAdapter(
+      'virustotal',
+      ['ipv4'],
+      async () => {
+        throw new ProviderError('rate_limited', '429', { retryAfterMs: 60_000 });
+      },
+      { concurrency: 1 },
+    );
     const h = await serverless([vt]);
     await create(h, '1.1.1.1\n8.8.8.8');
     await h.service.tick(1000);

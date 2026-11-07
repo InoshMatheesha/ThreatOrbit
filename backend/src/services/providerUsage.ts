@@ -1,8 +1,28 @@
 import { incrementBelow } from '../lib/counter.js';
 import { ProviderUsage } from '../models/ProviderUsage.js';
+import { ProviderWindow } from '../models/Throttle.js';
 
 export function utcDay(date = new Date()): string {
   return date.toISOString().slice(0, 10);
+}
+
+/** Usage and rate-window subject for one pooled API key (stored beside the per-provider counters). */
+export function keySubject(keyId: string): string {
+  return `key:${keyId}`;
+}
+
+/**
+ * Atomically take one request slot in the subject's current one-minute window
+ * (shared through the database, so every process and function instance agrees).
+ */
+export function reserveMinuteSlot(subject: string, perMinute: number): Promise<boolean> {
+  const minute = Math.floor(Date.now() / 60_000);
+  return incrementBelow(ProviderWindow, { provider: subject, minute }, perMinute, { expiresAt: new Date((minute + 2) * 60_000) });
+}
+
+/** Milliseconds until the next one-minute window opens. */
+export function msUntilNextMinute(now = Date.now()): number {
+  return 60_000 - (now % 60_000);
 }
 
 /**

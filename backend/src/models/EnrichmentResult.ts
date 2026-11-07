@@ -43,6 +43,8 @@ export interface EnrichmentResultDoc {
   error?: LookupError;
   /** Earliest time a queued lookup may run again (retry backoff). */
   nextAttemptAt?: Date;
+  /** VirusTotal reanalysis in progress: when the rescan was requested and how often the result was checked. */
+  reanalysis?: { requestedAt: Date; checks: number };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -71,6 +73,7 @@ const resultSchema = new Schema<EnrichmentResultDoc>(
     cachedFromId: { type: Schema.Types.ObjectId },
     error: { _id: false, kind: String, message: String, httpStatus: Number, at: Date },
     nextAttemptAt: Date,
+    reanalysis: { _id: false, requestedAt: Date, checks: Number },
   },
   { timestamps: true, versionKey: false },
 );

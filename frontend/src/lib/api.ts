@@ -157,6 +157,8 @@ export interface Batch {
   status: BatchStatus;
   terminal: boolean;
   mode: ParseMode;
+  /** VirusTotal was asked to rescan each indicator for this batch. */
+  includeReanalysis?: boolean;
   createdBy: { id: string; email: string; name: string };
   source: { kind: 'text' | 'file'; name?: string; bytes?: number };
   totals: { indicators: number; eligible: number; ineligible: number; invalid: number; duplicates: number };
@@ -223,6 +225,38 @@ export interface ProviderInfo {
   signupUrl: string;
   limits: { requestsPerMinute: number; dailyLimit: number | null; concurrency: number };
   usedToday: number;
+  /** Usable API keys. Only sent to administrators. */
+  keyCount?: number;
+}
+
+export type ProviderKeyStatus = 'ok' | 'inactive' | 'rejected' | 'unreadable';
+
+/** Administrator view of one provider API key. Only the last four characters are ever sent. */
+export interface ProviderKey {
+  id: string;
+  provider: ProviderId;
+  source: 'database' | 'environment';
+  label: string;
+  keyHint: string;
+  active: boolean;
+  status: ProviderKeyStatus;
+  statusMessage: string | null;
+  requestsPerMinute: number | null;
+  dailyLimit: number | null;
+  effectiveLimits: { requestsPerMinute: number; dailyLimit: number | null };
+  usedToday: number;
+  createdBy: { id: string; name: string } | null;
+  updatedBy: { id: string; name: string } | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface ProviderKeyInput {
+  label?: string;
+  apiKey?: string;
+  active?: boolean;
+  requestsPerMinute?: number | null;
+  dailyLimit?: number | null;
 }
 
 export type AiProviderId = 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'kimi' | 'custom';
@@ -337,6 +371,8 @@ export interface CreateBatchInput {
   mode: ParseMode;
   label?: string;
   acknowledgeThirdPartySharing: boolean;
+  /** Ask VirusTotal to rescan each indicator and wait for the fresh result. */
+  includeReanalysis?: boolean;
 }
 
 export async function createBatch(input: CreateBatchInput): Promise<Batch> {
@@ -344,6 +380,7 @@ export async function createBatch(input: CreateBatchInput): Promise<Batch> {
     mode: input.mode,
     acknowledgeThirdPartySharing: input.acknowledgeThirdPartySharing,
     ...(input.label ? { label: input.label } : {}),
+    ...(input.includeReanalysis ? { includeReanalysis: true } : {}),
   };
   if (input.input.kind === 'text') return send('POST', '/api/batches', { text: input.input.text, ...fields });
   const form = new FormData();
@@ -375,8 +412,14 @@ export const api = {
   explainItem: (id: string, index: number, refresh = false) =>
     send<Explained<ItemExplanation>>('POST', `/api/batches/${id}/items/${index}/explanation`, { refresh }),
   getAiSettings: () => send<AiSettings>('GET', '/api/settings/ai'),
-  saveAiSettings: (input: { provider: AiProviderId; apiKey?: string; model?: string; baseUrl?: string; preferFree?: boolean; autoDetect?: boolean }) =>
-    send<AiSettings>('PUT', '/api/settings/ai', input),
+  saveAiSettings: (input: {
+    provider: AiProviderId;
+    apiKey?: string;
+    model?: string;
+    baseUrl?: string;
+    preferFree?: boolean;
+    autoDetect?: boolean;
+  }) => send<AiSettings>('PUT', '/api/settings/ai', input),
   removeAiSettings: () => send<AiSettings>('DELETE', '/api/settings/ai'),
   getAiModels: () => send<Array<{ id: string; name: string; free?: boolean }>>('GET', '/api/settings/ai/models'),
   cancelBatch: (id: string) => send<Batch>('POST', `/api/batches/${id}/cancel`),
@@ -386,8 +429,19 @@ export const api = {
   tickQueue: () => send<{ mode: 'bullmq' | 'memory' | 'database'; processed: number; pending: number | null }>('POST', '/api/queue/tick'),
   deleteBatch: (id: string) => send<void>('DELETE', `/api/batches/${id}`),
   deleteAll: () => send<{ batches: number }>('DELETE', '/api/batches', { confirm: 'DELETE ALL' }),
-  providers: () => getWithMeta<ProviderInfo[], { queueMode: 'bullmq' | 'memory' }>('/api/providers'),
+  providers: () => getWithMeta<ProviderInfo[], { queueMode: 'bullmq' | 'memory' | 'database' }>('/api/providers'),
   testProvider: (id: ProviderId) => send<{ ok: boolean; message: string; kind?: string; ms?: number }>('POST', `/api/providers/${id}/test`),
+  providerKeys: () => getWithMeta<ProviderKey[], { encryptionAvailable: boolean }>('/api/settings/provider-keys'),
+  addProviderKey: (input: ProviderKeyInput & { provider: ProviderId; label: string; apiKey: string }) =>
+    send<ProviderKey>('POST', '/api/settings/provider-keys', input),
+  updateProviderKey: (id: string, changes: ProviderKeyInput) =>
+    send<ProviderKey>('PATCH', `/api/settings/provider-keys/${encodeURIComponent(id)}`, changes),
+  deleteProviderKey: (id: string) => send<void>('DELETE', `/api/settings/provider-keys/${encodeURIComponent(id)}`),
+  testProviderKey: (id: string) =>
+    send<{ ok: boolean; message: string; kind?: string; ms?: number }>(
+      'POST',
+      `/api/settings/provider-keys/${encodeURIComponent(id)}/test`,
+    ),
   audit: (limit = 50) => send<AuditEntry[]>('GET', `/api/audit?limit=${limit}`),
   me: () => send<CurrentUser>('GET', '/api/auth/me'),
   login: (email: string, password: string) => send<CurrentUser>('POST', '/api/auth/login', { email, password }),

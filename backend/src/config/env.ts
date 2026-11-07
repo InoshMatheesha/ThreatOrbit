@@ -64,6 +64,19 @@ const envSchema = z.object({
   PROVIDER_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   LOOKUP_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(4),
   RETRY_BASE_DELAY_MS: z.coerce.number().int().positive().default(2_000),
+  /** VirusTotal reanalysis: wait between checks for the fresh analysis, and the longest total wait. */
+  REANALYSIS_POLL_MS: z.coerce.number().int().positive().default(45_000),
+  REANALYSIS_MAX_WAIT_MS: z.coerce.number().int().positive().default(240_000),
+  /**
+   * Encrypts API keys stored in the database (AES-256-GCM). At least 32 characters, e.g. `openssl rand -base64 48`.
+   * Required in production. In development a key file is generated under .data/ when unset.
+   */
+  ENCRYPTION_KEY: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.trim() ? v.trim() : undefined))
+    .pipe(z.string().min(32, 'ENCRYPTION_KEY must be at least 32 characters').optional()),
+  ENCRYPTION_KEY_FILE: z.string().default('.data/encryption.key'),
   RISK_RULES_PATH: z.string().optional(),
   /** Comma-separated provider ids to switch off even when a key is present. */
   PROVIDERS_DISABLED: z.string().default(''),
@@ -121,8 +134,10 @@ export type AppConfig = {
     timeoutMs: number;
     maxAttempts: number;
     retryBaseDelayMs: number;
+    reanalysis: { pollMs: number; maxWaitMs: number };
     riskRulesPath?: string;
   };
+  secrets: { encryptionKey: string | null; encryptionKeyFile: string };
   retention: { days: number; auditDays: number };
   ai: { apiKey: string | null; model: string; dailyLimit: number };
   providers: Record<ProviderId, ProviderSettings>;
@@ -189,8 +204,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       timeoutMs: e.PROVIDER_TIMEOUT_MS,
       maxAttempts: e.LOOKUP_MAX_ATTEMPTS,
       retryBaseDelayMs: e.RETRY_BASE_DELAY_MS,
+      reanalysis: { pollMs: e.REANALYSIS_POLL_MS, maxWaitMs: Math.max(e.REANALYSIS_MAX_WAIT_MS, e.REANALYSIS_POLL_MS) },
       ...(e.RISK_RULES_PATH ? { riskRulesPath: e.RISK_RULES_PATH } : {}),
     },
+    secrets: { encryptionKey: e.ENCRYPTION_KEY ?? null, encryptionKeyFile: e.ENCRYPTION_KEY_FILE },
     retention: { days: e.RETENTION_DAYS, auditDays: e.AUDIT_RETENTION_DAYS },
     ai: { apiKey: e.ANTHROPIC_API_KEY, model: e.AI_MODEL, dailyLimit: e.AI_DAILY_LIMIT },
     providers: {

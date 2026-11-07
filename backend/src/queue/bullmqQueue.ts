@@ -16,7 +16,7 @@ const DEFAULT_PREFIX = 'tih';
 export class BullMqLookupQueue implements LookupQueue {
   readonly mode = 'bullmq' as const;
   private queues = new Map<ProviderId, Queue<LookupJob>>();
-  private workers: Worker<LookupJob>[] = [];
+  private workers = new Map<ProviderId, Worker<LookupJob>>();
   private connections: Redis[] = [];
 
   constructor(
@@ -53,7 +53,17 @@ export class BullMqLookupQueue implements LookupQueue {
         },
       );
       worker.on('error', (err) => this.logger.error({ provider, err: err.message }, 'Queue worker error'));
-      this.workers.push(worker);
+      this.workers.set(provider, worker);
+    }
+  }
+
+  /** BullMQ reads `opts.limiter` on every fetch, so both settings take effect immediately. */
+  updateLimits(limits: Map<ProviderId, ProviderLimits>) {
+    for (const [provider, l] of limits) {
+      const worker = this.workers.get(provider);
+      if (!worker) continue;
+      worker.concurrency = Math.max(1, l.concurrency);
+      if (worker.opts.limiter) worker.opts.limiter.max = Math.max(1, l.requestsPerMinute);
     }
   }
 
@@ -86,7 +96,7 @@ export class BullMqLookupQueue implements LookupQueue {
   }
 
   async close() {
-    await Promise.all(this.workers.map((w) => w.close()));
+    await Promise.all([...this.workers.values()].map((w) => w.close()));
     await Promise.all([...this.queues.values()].map((q) => q.close()));
     await Promise.all(this.connections.map((c) => c.quit().catch(() => {})));
   }

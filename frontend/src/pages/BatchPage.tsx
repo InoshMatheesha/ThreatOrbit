@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DownloadIcon, TrashIcon, XIcon, RefreshIcon } from '../components/icons';
 import { BatchStatusBadge, ErrorBanner, Notice, Page, Panel, ProgressBar, RiskGauge, Skeleton, Stat } from '../components/ui';
 import { BatchExplainer } from '../features/ai/BatchExplainer';
@@ -64,24 +64,29 @@ function ProviderProgressPanel({ batch }: { batch: Batch }) {
   );
 }
 
-/** Fetches all IP-type indicators for the batch (up to 200) for the BulkVerify toolbar. */
-function useIpItems(batchId: string, version: number): ItemView[] {
+const ALL_ITEMS_PAGE = 1000;
+/** While lookups are still arriving, refresh the full list at most this often (it can be large). */
+const ALL_ITEMS_REFRESH_MS = 10_000;
+
+/** Every indicator in the batch (all pages), for the "open all in tabs" toolbar. */
+function useAllItems(batchId: string, version: number, terminal: boolean): ItemView[] {
   const [items, setItems] = useState<ItemView[]>([]);
+  const lastFetch = useRef(0);
   useEffect(() => {
+    if (!terminal && Date.now() - lastFetch.current < ALL_ITEMS_REFRESH_MS) return;
+    lastFetch.current = Date.now();
     const controller = new AbortController();
-    Promise.allSettled([
-      api.getResults(batchId, { type: 'ipv4', page: 1, pageSize: 200 }, controller.signal),
-      api.getResults(batchId, { type: 'ipv6', page: 1, pageSize: 200 }, controller.signal),
-    ])
-      .then(([r4, r6]) => {
-        if (controller.signal.aborted) return;
-        const v4 = r4.status === 'fulfilled' ? r4.value.data : [];
-        const v6 = r6.status === 'fulfilled' ? r6.value.data : [];
-        setItems([...v4, ...v6]);
-      })
-      .catch(() => {});
+    (async () => {
+      const all: ItemView[] = [];
+      for (let page = 1; ; page++) {
+        const r = await api.getResults(batchId, { sort: 'line', order: 'asc', page, pageSize: ALL_ITEMS_PAGE }, controller.signal);
+        all.push(...r.data);
+        if (r.data.length < ALL_ITEMS_PAGE || all.length >= r.meta.total) break;
+      }
+      if (!controller.signal.aborted) setItems(all);
+    })().catch(() => {});
     return () => controller.abort();
-  }, [batchId, version]);
+  }, [batchId, version, terminal]);
   return items;
 }
 
@@ -92,8 +97,7 @@ export function BatchPage({ id }: { id: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // All IP indicators in this batch — fed into BulkVerify.
-  const ipItems = useIpItems(id, version);
+  const allItems = useAllItems(id, version, batch?.terminal ?? false);
 
   async function act(name: string, fn: () => Promise<unknown>) {
     setBusy(name);
@@ -149,6 +153,7 @@ export function BatchPage({ id }: { id: string }) {
           Started by {batch.createdBy?.name ?? 'unknown'} {relativeTime(batch.createdAt)} ·{' '}
           {batch.source.kind === 'file' ? `file ${batch.source.name}` : 'pasted text'} ·{' '}
           {batch.mode === 'extract' ? 'extracted from text' : 'list'}
+          {batch.includeReanalysis && ' · with VirusTotal reanalysis'}
           {batch.completedAt && ` · finished ${relativeTime(batch.completedAt)}`}
         </span>
       }
@@ -226,7 +231,7 @@ export function BatchPage({ id }: { id: string }) {
         </div>
       </div>
 
-      <ResultsTable batch={batch} version={version} selected={selected} onSelect={setSelected} batchIpItems={ipItems} />
+      <ResultsTable batch={batch} version={version} selected={selected} onSelect={setSelected} allItems={allItems} />
 
       <BatchExplainer batchId={batch.id} terminal={batch.terminal} />
 

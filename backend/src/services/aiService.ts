@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import type { AppConfig } from '../config/env.js';
+import { keyHint, vaultFor, type EncryptedSecret, type SecretVault } from '../lib/crypto.js';
 import { ApiError } from '../lib/errors.js';
 import { AiExplanation, Setting, type BatchDoc, type ExplanationScope } from '../models/index.js';
 import {
@@ -208,11 +209,7 @@ const defaultFactory: ClientFactory = (s) => {
 };
 
 /** Smart model auto-detection across all providers (with free-model prioritization). */
-export function pickBestModel(
-  provider: AiProvider,
-  models: AiModelInfo[],
-  preferFree = false,
-): string {
+export function pickBestModel(provider: AiProvider, models: AiModelInfo[], preferFree = false): string {
   const ids = models.map((m) => m.id);
   if (ids.length === 0) return AI_PROVIDERS[provider].defaultModel;
 
@@ -350,9 +347,7 @@ export function normalizeBatchExplanation(raw: unknown, top: Array<{ value: stri
           return {
             value,
             headline: normalizeString(i.headline ?? i.title) || 'Indicator assessment',
-            explanation:
-              normalizeString(i.explanation ?? i.summary ?? i.description) ||
-              'Examined against threat intelligence sources.',
+            explanation: normalizeString(i.explanation ?? i.summary ?? i.description) || 'Examined against threat intelligence sources.',
             nextSteps: normalizeArray(i.nextSteps ?? i.next_steps ?? i.recommendations) ?? [],
           };
         })
@@ -391,6 +386,17 @@ export function normalizeItemExplanation(raw: unknown, defaultHeadline = 'Indica
 
 const SETTING_ID = 'ai';
 const SETTINGS_TTL_MS = 10_000;
+/** Binds the encrypted AI key to its setting record. */
+const AI_KEY_CONTEXT = 'setting:ai';
+
+/** What is stored in the `ai` setting. The key is encrypted; `apiKey` is only read from rows written by older versions. */
+interface StoredAiValue {
+  provider?: string;
+  apiKeyEnc?: EncryptedSecret;
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
+}
 
 interface Deps {
   config: AppConfig;
@@ -420,8 +426,11 @@ export class AiService {
   private readonly factory: ClientFactory;
   private resolved: { at: number; value: Resolved | null } | null = null;
 
+  private readonly vault: SecretVault;
+
   constructor(private readonly deps: Deps) {
     this.factory = deps.factory ?? defaultFactory;
+    this.vault = vaultFor(deps.config);
   }
 
   // ---- configuration ----
@@ -444,18 +453,36 @@ export class AiService {
 
   private async stored(): Promise<(AiSettings & { updatedAt: Date; updatedBy?: { id: string; name: string } }) | null> {
     const doc = await Setting.findById(SETTING_ID).lean();
-    const v = doc?.value as Partial<AiSettings> | undefined;
-    if (!doc || !v?.apiKey || !v.model || !v.provider || !Object.prototype.hasOwnProperty.call(AI_PROVIDERS, v.provider)) {
-      return null;
+    const v = doc?.value as StoredAiValue | undefined;
+    if (!doc || !v?.model || !v.provider || !Object.prototype.hasOwnProperty.call(AI_PROVIDERS, v.provider)) return null;
+
+    let apiKey: string | null = null;
+    if (v.apiKeyEnc) {
+      apiKey = this.vault.tryDecrypt(v.apiKeyEnc, AI_KEY_CONTEXT);
+      if (apiKey === null) this.deps.logger.warn('Stored AI key cannot be decrypted (was ENCRYPTION_KEY changed?); paste it again');
+    } else if (v.apiKey) {
+      apiKey = v.apiKey;
+      await this.encryptLegacyKey(v.apiKey);
     }
+    if (!apiKey) return null;
     return {
       provider: v.provider as AiProvider,
-      apiKey: v.apiKey,
+      apiKey,
       model: v.model,
       baseUrl: v.baseUrl,
       updatedAt: doc.updatedAt,
       ...(doc.updatedBy ? { updatedBy: doc.updatedBy } : {}),
     };
+  }
+
+  /** Older versions stored the key in plain text: encrypt it in place the first time it is read. */
+  private async encryptLegacyKey(apiKey: string) {
+    if (!this.vault.available) return;
+    await Setting.updateOne(
+      { _id: SETTING_ID, 'value.apiKey': apiKey },
+      { $set: { 'value.apiKeyEnc': this.vault.encrypt(apiKey, AI_KEY_CONTEXT) }, $unset: { 'value.apiKey': 1 } },
+    );
+    this.deps.logger.info('Encrypted the stored AI key');
   }
 
   async status(): Promise<AiStatus> {
@@ -479,7 +506,7 @@ export class AiService {
       provider: r?.provider ?? null,
       model: r?.model ?? null,
       baseUrl: stored?.baseUrl ?? null,
-      keyHint: key ? `...${key.slice(-4)}` : null,
+      keyHint: key ? keyHint(key) : null,
       updatedAt: stored?.updatedAt ?? null,
       updatedBy: stored?.updatedBy?.name ?? null,
       providers: Object.entries(AI_PROVIDERS).map(([id, p]) => ({ id: id as AiProvider, ...p })),
@@ -529,11 +556,7 @@ export class AiService {
       const kind = err instanceof AiClientError ? err.kind : 'failed';
       this.deps.logger.warn({ kind, err: (err as Error).message }, 'AI key check failed');
       if (kind === 'rejected_key') {
-        throw new ApiError(
-          400,
-          'VALIDATION_ERROR',
-          `${meta.name} rejected this key. Check that you copied all of it.`,
-        );
+        throw new ApiError(400, 'VALIDATION_ERROR', `${meta.name} rejected this key. Check that you copied all of it.`);
       }
       throw this.toApiError(err);
     }
@@ -545,10 +568,7 @@ export class AiService {
     if (input.autoDetect || (!input.model && !sameProvider?.model)) {
       model = pickBestModel(input.provider, models, Boolean(input.preferFree));
     } else {
-      model =
-        input.model?.trim() ||
-        sameProvider?.model ||
-        pickBestModel(input.provider, models, Boolean(input.preferFree));
+      model = input.model?.trim() || sameProvider?.model || pickBestModel(input.provider, models, Boolean(input.preferFree));
     }
 
     if (ids.length > 0 && !ids.includes(model) && input.provider !== 'custom' && input.provider !== 'openrouter') {
@@ -559,7 +579,12 @@ export class AiService {
       { _id: SETTING_ID },
       {
         $set: {
-          value: { provider: input.provider, apiKey, model, ...(baseUrl ? { baseUrl } : {}) },
+          value: {
+            provider: input.provider,
+            apiKeyEnc: this.vault.encrypt(apiKey, AI_KEY_CONTEXT),
+            model,
+            ...(baseUrl ? { baseUrl } : {}),
+          } satisfies StoredAiValue,
           updatedAt: new Date(),
           updatedBy: { id: actor.id, name: actor.name },
         },
@@ -683,7 +708,11 @@ export class AiService {
       throw this.toApiError(err);
     }
     try {
-      const cleaned = result.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      const cleaned = result.text
+        .trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
       return { json: JSON.parse(cleaned), model: result.model };
     } catch {
       this.deps.logger.error({ model: result.model, text: result.text.slice(0, 500) }, 'AI returned text that is not valid JSON');

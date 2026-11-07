@@ -1,277 +1,256 @@
-import { useState, useCallback, useMemo } from 'react';
-import type { ItemView } from '../../lib/api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { IndicatorType, ItemView, ProviderId } from '../../lib/api';
 
-// ── Service definitions & query builders ─────────────────────────────────────
+// ── Indicator kinds and the services that can show each one ──────────────────
 
-export const EXTERNAL_SERVICES = [
-  {
-    id: 'virustotal' as const,
-    label: 'VirusTotal',
-    buttonLabel: 'Open all in VirusTotal',
-    shortLabel: 'VirusTotal',
-    color: 'bg-[#0052cc] hover:bg-[#0065ff] text-white shadow-sm ring-1 ring-blue-400/40',
-    activeColor: 'bg-emerald-600 text-white ring-1 ring-emerald-400/40',
-    icon: '🔵',
-    url: (ip: string) => `https://www.virustotal.com/gui/ip-address/${encodeURIComponent(ip)}`,
-  },
-  {
-    id: 'abuseipdb' as const,
-    label: 'AbuseIPDB',
-    buttonLabel: 'Open all in AbuseIPDB',
-    shortLabel: 'AbuseIPDB',
-    color: 'bg-[#e65100] hover:bg-[#f57c00] text-white shadow-sm ring-1 ring-orange-400/40',
-    activeColor: 'bg-emerald-600 text-white ring-1 ring-emerald-400/40',
-    icon: '🟠',
-    url: (ip: string) => `https://www.abuseipdb.com/check/${encodeURIComponent(ip)}`,
-  },
-  {
-    id: 'otx' as const,
-    label: 'OTX',
-    buttonLabel: 'Open all in OTX',
-    shortLabel: 'OTX (AlienVault)',
-    color: 'bg-[#0d8050] hover:bg-[#10a366] text-white shadow-sm ring-1 ring-emerald-400/40',
-    activeColor: 'bg-emerald-600 text-white ring-1 ring-emerald-400/40',
-    icon: '🟢',
-    url: (ip: string) => `https://otx.alienvault.com/indicator/ip/${encodeURIComponent(ip)}`,
-  },
-] as const;
+type Kind = 'ip' | 'domain' | 'url' | 'hash';
 
-export type ExternalServiceId = (typeof EXTERNAL_SERVICES)[number]['id'];
+const KIND_OF: Record<IndicatorType, Kind> = {
+  ipv4: 'ip',
+  ipv6: 'ip',
+  domain: 'domain',
+  url: 'url',
+  md5: 'hash',
+  sha1: 'hash',
+  sha256: 'hash',
+};
 
-interface FeedbackState {
-  serviceId: ExternalServiceId;
-  count: number;
-  blocked: boolean;
+const KIND_LABELS: Record<Kind, [singular: string, plural: string]> = {
+  ip: ['IP', 'IPs'],
+  domain: ['domain', 'domains'],
+  url: ['URL', 'URLs'],
+  hash: ['hash', 'hashes'],
+};
+
+const enc = encodeURIComponent;
+
+interface ExternalService {
+  id: ProviderId;
+  label: string;
+  icon: string;
+  color: string;
+  /** Page for an indicator of each kind. Kinds without a builder are opened only via a lookup's permalink. */
+  pages: Partial<Record<Kind, (value: string) => string>>;
 }
 
-export interface BulkVerifyProps {
-  /** Optional array of ItemView records to extract IPs from */
-  items?: ItemView[] | null;
-  /** Optional array of raw IP address strings */
-  ips?: string[];
-  /** Display variant: 'bar' (embedded in table toolbar) or 'card' (standalone panel) */
-  variant?: 'bar' | 'card';
-  className?: string;
+export const EXTERNAL_SERVICES: readonly ExternalService[] = [
+  {
+    id: 'virustotal',
+    label: 'VirusTotal',
+    icon: '🔵',
+    color: 'bg-[#0052cc] hover:bg-[#0065ff] text-white ring-1 ring-blue-400/40',
+    pages: {
+      ip: (v) => `https://www.virustotal.com/gui/ip-address/${enc(v)}`,
+      domain: (v) => `https://www.virustotal.com/gui/domain/${enc(v)}`,
+      hash: (v) => `https://www.virustotal.com/gui/file/${enc(v)}`,
+      // VirusTotal identifies URLs by a hash of their canonical form; without a lookup permalink, search for it.
+      url: (v) => `https://www.virustotal.com/gui/search/${enc(enc(v))}`,
+    },
+  },
+  {
+    id: 'abuseipdb',
+    label: 'AbuseIPDB',
+    icon: '🟠',
+    color: 'bg-[#e65100] hover:bg-[#f57c00] text-white ring-1 ring-orange-400/40',
+    pages: {
+      ip: (v) => `https://www.abuseipdb.com/check/${enc(v)}`,
+      domain: (v) => `https://www.abuseipdb.com/check/${enc(v)}`,
+    },
+  },
+  {
+    id: 'otx',
+    label: 'OTX',
+    icon: '🟢',
+    color: 'bg-[#0d8050] hover:bg-[#10a366] text-white ring-1 ring-emerald-400/40',
+    pages: {
+      ip: (v) => `https://otx.alienvault.com/indicator/ip/${enc(v)}`,
+      domain: (v) => `https://otx.alienvault.com/indicator/domain/${enc(v)}`,
+      url: (v) => `https://otx.alienvault.com/indicator/url/${enc(v)}`,
+      hash: (v) => `https://otx.alienvault.com/indicator/file/${enc(v)}`,
+    },
+  },
+  {
+    id: 'urlhaus',
+    label: 'URLhaus',
+    icon: '🟣',
+    color: 'bg-[#5b3fa8] hover:bg-[#6d4fc2] text-white ring-1 ring-violet-400/40',
+    pages: {
+      url: (v) => `https://urlhaus.abuse.ch/browse.php?search=${enc(v)}`,
+      domain: (v) => `https://urlhaus.abuse.ch/browse.php?search=${enc(v)}`,
+      ip: (v) => `https://urlhaus.abuse.ch/browse.php?search=${enc(v)}`,
+    },
+  },
+];
+
+/**
+ * Pages to open for one service: the exact report link from a finished lookup when there
+ * is one, otherwise the service's page for that kind of indicator. Unique, in input order.
+ */
+function pagesFor(service: ExternalService, items: ItemView[]): string[] {
+  const urls = new Set<string>();
+  for (const item of items) {
+    const permalink = item.results[service.id]?.permalink;
+    const url = permalink && /^https:\/\//i.test(permalink) ? permalink : service.pages[KIND_OF[item.type]]?.(item.value);
+    if (url) urls.add(url);
+  }
+  return [...urls];
 }
 
 /**
- * Programmatically opens one new browser tab per IP for the given service.
- * Executed synchronously inside the click handler to stay within browser
- * user-activation security policies.
+ * Open one tab per page. Runs synchronously inside the click handler so it stays within the
+ * browser's user-activation window; browsers that still block extra tabs are detected and reported.
  */
-function openTabsForService(ips: string[], urlBuilder: (ip: string) => string): { opened: number; blocked: boolean } {
-  if (ips.length === 0) return { opened: 0, blocked: false };
-
+function openTabs(urls: string[]): { opened: number; blocked: boolean } {
   let opened = 0;
   let blocked = false;
-
-  for (let i = 0; i < ips.length; i++) {
-    const ip = ips[i];
-    if (!ip) continue;
+  for (const url of urls) {
     try {
-      const w = window.open(urlBuilder(ip), '_blank', 'noopener,noreferrer');
-      if (!w || w.closed || typeof w.closed === 'undefined') {
-        // Browser popup blocker intervened on this tab
+      // With noopener, window.open returns null even on success in some browsers, so open first and detach.
+      const w = window.open(url, '_blank');
+      if (!w) {
         blocked = true;
-      } else {
-        opened++;
+        continue;
       }
+      w.opener = null;
+      opened++;
     } catch {
       blocked = true;
     }
   }
-
   return { opened, blocked };
 }
 
-export function BulkVerify({ items, ips, variant = 'bar', className = '' }: BulkVerifyProps) {
-  const [feedback, setFeedback] = useState<FeedbackState | null>(null);
-  const [busy, setBusy] = useState<ExternalServiceId | null>(null);
+interface Feedback {
+  serviceId: ProviderId;
+  opened: number;
+  blocked: boolean;
+}
 
-  // Extract unique IP addresses from either explicit list or ItemView items
-  const ipAddresses = useMemo(() => {
-    if (ips && ips.length > 0) {
-      return [...new Set(ips)];
-    }
-    if (items && items.length > 0) {
-      return [
-        ...new Set(
-          items
-            .filter((item) => item.type === 'ipv4' || item.type === 'ipv6')
-            .map((item) => item.value),
-        ),
-      ];
-    }
-    return [];
-  }, [items, ips]);
+export interface BulkVerifyProps {
+  /** Every indicator in the batch (only provider-eligible ones are opened). */
+  items: ItemView[];
+  className?: string;
+}
 
-  const handleVerify = useCallback(
-    (service: (typeof EXTERNAL_SERVICES)[number]) => {
-      if (ipAddresses.length === 0 || busy !== null) return;
+/** Toolbar that opens every indicator of the batch in a provider's website, one tab each. */
+export function BulkVerify({ items, className = '' }: BulkVerifyProps) {
+  const [scope, setScope] = useState<Kind | 'all'>('all');
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
 
-      setBusy(service.id);
-      setFeedback(null);
-
-      const result = openTabsForService(ipAddresses, service.url);
-
-      setFeedback({
-        serviceId: service.id,
-        count: result.opened,
-        blocked: result.blocked,
-      });
-      setBusy(null);
-
-      // Auto-dismiss the positive feedback badge after 4.5 seconds
-      setTimeout(() => {
-        setFeedback((prev) => (prev?.serviceId === service.id ? null : prev));
-      }, 4500);
-    },
-    [ipAddresses, busy],
+  // Indicators kept local (private IPs, internal domains) are never sent anywhere, not even as a tab.
+  const eligible = useMemo(() => items.filter((i) => i.lookupEligible), [items]);
+  const counts = useMemo(() => {
+    const c: Record<Kind, number> = { ip: 0, domain: 0, url: 0, hash: 0 };
+    for (const item of eligible) c[KIND_OF[item.type]]++;
+    return c;
+  }, [eligible]);
+  const kinds = (Object.keys(counts) as Kind[]).filter((k) => counts[k] > 0);
+  const activeScope = scope !== 'all' && counts[scope] === 0 ? 'all' : scope;
+  const inScope = useMemo(
+    () => (activeScope === 'all' ? eligible : eligible.filter((i) => KIND_OF[i.type] === activeScope)),
+    [eligible, activeScope],
   );
+  const targets = useMemo(() => EXTERNAL_SERVICES.map((s) => ({ service: s, urls: pagesFor(s, inScope) })), [inScope]);
 
-  // Do not render anything if there are no IPs identified
-  if (ipAddresses.length === 0) return null;
+  const open = useCallback((service: ExternalService, urls: string[]) => {
+    if (urls.length === 0) return;
+    const result = openTabs(urls);
+    setFeedback({ serviceId: service.id, ...result });
+    if (timer.current) clearTimeout(timer.current);
+    if (!result.blocked) timer.current = setTimeout(() => setFeedback(null), 4500);
+  }, []);
 
-  // Render integrated toolbar bar variant (inside ResultsTable)
-  if (variant === 'bar') {
-    return (
-      <div className={`border-b border-line bg-raised/60 px-4 py-3 sm:px-5 ${className}`}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-brand-soft text-[12px] font-bold text-brand ring-1 ring-brand/30">
-              ⚡
-            </span>
-            <div>
-              <span className="text-[13px] font-semibold text-ink">
-                Bulk Verification
-              </span>
-              <span className="ml-1.5 text-[12px] text-muted">
-                — Open all <strong className="text-ink">{ipAddresses.length} IP{ipAddresses.length !== 1 ? 's' : ''}</strong> in one click:
-              </span>
-            </div>
-          </div>
+  if (eligible.length === 0) return null;
 
-          <div className="flex flex-wrap items-center gap-2">
-            {EXTERNAL_SERVICES.map((service) => {
-              const isBusy = busy === service.id;
-              const wasDone = feedback?.serviceId === service.id;
+  const scopeLabel =
+    activeScope === 'all'
+      ? kinds.map((k) => `${counts[k]} ${KIND_LABELS[k][counts[k] === 1 ? 0 : 1]}`).join(', ')
+      : `${counts[activeScope]} ${KIND_LABELS[activeScope][counts[activeScope] === 1 ? 0 : 1]}`;
 
-              return (
-                <button
-                  key={service.id}
-                  type="button"
-                  disabled={busy !== null}
-                  onClick={() => handleVerify(service)}
-                  className={`
-                    inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60
-                    ${wasDone ? service.activeColor : service.color}
-                  `}
-                  title={`Open all ${ipAddresses.length} identified IPs in ${service.label} tabs`}
-                >
-                  <span aria-hidden>{service.icon}</span>
-                  {isBusy ? (
-                    <span>Opening…</span>
-                  ) : wasDone ? (
-                    <span>✓ Opened {feedback?.count ?? ipAddresses.length} in {service.label}</span>
-                  ) : (
-                    <span>
-                      {service.buttonLabel}{' '}
-                      <span className="ml-1 rounded-full bg-white/25 px-1.5 py-0.2 text-[10px] tabular-nums">
-                        {ipAddresses.length}
-                      </span>
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Warning if the browser's popup blocker stopped any tabs */}
-        {feedback?.blocked && (
-          <div className="mt-2.5 flex items-center gap-2 rounded-md bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-400 ring-1 ring-amber-500/20">
-            <span>⚠️</span>
-            <span>
-              Your browser may have blocked additional tabs. Click the pop-up blocker icon in your browser address bar and choose <strong>"Always allow pop-ups from this site"</strong>.
-            </span>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Render standalone card variant
   return (
-    <section className={`card overflow-hidden ${className}`}>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
-        <div>
-          <h2 className="text-[13px] font-semibold tracking-tight">Bulk IP Verification</h2>
-          <p className="mt-0.5 text-[12px] text-muted">
-            {ipAddresses.length} IP address{ipAddresses.length !== 1 ? 'es' : ''} identified — programmatically open all external searches in one click.
-          </p>
-        </div>
-      </div>
-
-      <div className="px-4 py-4 sm:px-5">
-        {/* Identified IP chips */}
-        <div className="mb-4 flex flex-wrap gap-1.5">
-          {ipAddresses.map((ip) => (
-            <span key={ip} className="chip bg-raised font-mono text-[11px] ring-1 ring-line">
-              {ip}
+    <div className={`border-b border-line bg-raised/60 px-4 py-3 sm:px-5 ${className}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+          <span
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-brand-soft text-[12px] font-bold text-brand ring-1 ring-brand/30"
+            aria-hidden
+          >
+            ⚡
+          </span>
+          <span className="text-[13px] font-semibold text-ink">Open all in tabs</span>
+          <span className="text-[12px] text-muted">{scopeLabel}</span>
+          {kinds.length > 1 && (
+            <span className="flex flex-wrap items-center gap-1" role="radiogroup" aria-label="Indicators to open">
+              {(['all', ...kinds] as Array<Kind | 'all'>).map((k) => {
+                const active = activeScope === k;
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setScope(k)}
+                    className={`chip !px-2 !py-0.5 !text-[11px] capitalize transition ${
+                      active ? 'bg-ink text-canvas' : 'bg-raised text-muted ring-1 ring-line hover:text-ink'
+                    }`}
+                  >
+                    {k === 'all' ? 'All' : KIND_LABELS[k][1]}
+                  </button>
+                );
+              })}
             </span>
-          ))}
+          )}
         </div>
 
-        {/* Action buttons */}
-        <div className="flex flex-wrap gap-2.5">
-          {EXTERNAL_SERVICES.map((service) => {
-            const isBusy = busy === service.id;
-            const wasDone = feedback?.serviceId === service.id;
-
+        <div className="flex flex-wrap items-center gap-2">
+          {targets.map(({ service, urls }) => {
+            const done = feedback?.serviceId === service.id && !feedback.blocked;
             return (
               <button
                 key={service.id}
                 type="button"
-                disabled={busy !== null}
-                onClick={() => handleVerify(service)}
-                className={`
-                  inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-semibold
-                  transition-all duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60
-                  ${wasDone ? service.activeColor : service.color}
-                `}
-                title={`Open all ${ipAddresses.length} IP${ipAddresses.length !== 1 ? 's' : ''} in ${service.label}`}
+                disabled={urls.length === 0}
+                onClick={() => open(service, urls)}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold shadow-sm transition-all duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 ${
+                  done ? 'bg-emerald-600 text-white ring-1 ring-emerald-400/40' : service.color
+                }`}
+                title={
+                  urls.length
+                    ? `Open ${urls.length} tab${urls.length === 1 ? '' : 's'} in ${service.label}`
+                    : `${service.label} has no page for these indicators`
+                }
               >
                 <span aria-hidden>{service.icon}</span>
-                {isBusy ? (
-                  <>Opening tabs…</>
-                ) : wasDone ? (
-                  <>✓ Opened {feedback?.count ?? ipAddresses.length} in {service.label}</>
+                {done ? (
+                  <span>
+                    ✓ Opened {feedback.opened} in {service.label}
+                  </span>
                 ) : (
-                  <>
-                    {service.buttonLabel}{' '}
-                    <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[11px] tabular-nums">
-                      {ipAddresses.length}
-                    </span>
-                  </>
+                  <span>
+                    {service.label}
+                    <span className="ml-1.5 rounded-full bg-white/25 px-1.5 text-[10px] tabular-nums">{urls.length}</span>
+                  </span>
                 )}
               </button>
             );
           })}
         </div>
-
-        {feedback?.blocked ? (
-          <div className="mt-3 flex items-center gap-2 rounded-md bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-400 ring-1 ring-amber-500/20">
-            <span>⚠️</span>
-            <span>
-              Your browser blocked some tabs. Please click the pop-up icon in your address bar and select <strong>"Always allow pop-ups"</strong>.
-            </span>
-          </div>
-        ) : (
-          <p className="mt-3 text-[11px] text-muted">
-            Each button programmatically opens a new browser tab for each identified IP pre-loaded with the external search query.
-          </p>
-        )}
       </div>
-    </section>
+
+      {feedback?.blocked && (
+        <div
+          role="status"
+          className="mt-2.5 flex items-center gap-2 rounded-md bg-medium-soft px-3 py-1.5 text-[12px] text-medium ring-1 ring-medium/30"
+        >
+          <span aria-hidden>⚠️</span>
+          <span>
+            Opened {feedback.opened} of the tabs; your browser blocked the rest. Allow pop-ups for this site (icon in the address bar), then
+            click again.
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
