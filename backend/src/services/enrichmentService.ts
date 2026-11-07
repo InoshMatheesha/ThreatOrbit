@@ -22,10 +22,11 @@ import {
 } from '../models/index.js';
 import type { ParseResult } from '../parser/types.js';
 import type { ProviderRegistry } from '../providers/registry.js';
-import { isRetryableKind, ProviderError, type ErrorKind, type ProviderFinding } from '../providers/types.js';
+import { isRetryableKind, ProviderError, type ErrorKind, type ProviderFinding, type ProviderLimits } from '../providers/types.js';
 import type { LookupJob, LookupQueue, ProcessOutcome } from '../queue/types.js';
 import { audit } from './audit.js';
 import type { Principal } from './authService.js';
+import { ProviderKeyService } from './providerKeyService.js';
 import { reserveRequest } from './providerUsage.js';
 
 /** A 429 asking us to wait longer than this is a quota, not a burst limit. */
@@ -42,6 +43,7 @@ export interface CreateBatchOptions {
   actor: Principal;
   label?: string;
   source: BatchDoc['source'];
+  includeReanalysis?: boolean;
 }
 
 export interface EnrichmentDeps {
@@ -50,6 +52,7 @@ export interface EnrichmentDeps {
   registry: ProviderRegistry;
   queue: LookupQueue;
   rules: RiskRules;
+  keyService?: ProviderKeyService;
 }
 
 function findingFields(f: ProviderFinding) {
@@ -70,7 +73,17 @@ export class EnrichmentService {
   private refreshChains = new Map<string, Promise<void>>();
   private timers: NodeJS.Timeout[] = [];
 
-  constructor(private readonly deps: EnrichmentDeps) {}
+  readonly keyService: ProviderKeyService;
+
+  constructor(private readonly deps: EnrichmentDeps) {
+    this.keyService =
+      deps.keyService ??
+      new ProviderKeyService(
+        deps.config,
+        deps.logger,
+        deps.registry.all().map((r) => r.adapter),
+      );
+  }
 
   get queueMode() {
     return this.deps.queue.mode;
@@ -90,7 +103,11 @@ export class EnrichmentService {
    *   where other instances may be mid-lookup; the database queue recovers stale ones itself.
    */
   async start({ background = true, recover = true } = {}) {
-    const limits = new Map(this.deps.registry.all().map((r) => [r.adapter.id, r.limits]));
+    const limits = new Map<ProviderId, ProviderLimits>();
+    for (const r of this.deps.registry.all()) {
+      const eff = await this.keyService.getEffectiveLimits(r.adapter.id, r.limits);
+      limits.set(r.adapter.id, eff);
+    }
     await this.deps.queue.start((job) => this.processLookup(job), limits);
     if (recover) await this.recoverInterrupted();
     if (background) {
@@ -175,7 +192,7 @@ export class EnrichmentService {
       for (const item of targets) {
         const base = { batchId, itemIndex: item.index, type: item.type, value: item.value, provider: id };
         const hit = cache.get(`${item.type}:${item.value}`);
-        if (hit) {
+        if (hit && (!opts.includeReanalysis || id !== 'virustotal')) {
           cachedCount++;
           docs.push({
             ...base,
@@ -206,6 +223,7 @@ export class EnrichmentService {
       ...(opts.label ? { label: opts.label } : {}),
       status: 'queued',
       mode: parsed.mode,
+      includeReanalysis: Boolean(opts.includeReanalysis),
       source: opts.source,
       createdBy: { id: opts.actor.id, email: opts.actor.email, name: opts.actor.name },
       totals: {
@@ -410,18 +428,28 @@ export class EnrichmentService {
     if (!claimed) return { kind: 'done' };
 
     try {
-      const batch = await Batch.findById(job.batchId, { status: 1 }).lean();
+      const batch = await Batch.findById(job.batchId, { status: 1, includeReanalysis: 1 }).lean();
       if (!batch || batch.status === 'cancelling' || batch.status === 'cancelled') {
         await EnrichmentResult.updateOne({ _id: claimed._id }, { $set: { status: 'cancelled' } });
         return { kind: 'done' };
       }
 
       const runtime = registry.get(job.provider);
-      if (runtime.state !== 'ready' || !runtime.apiKey) {
+      let keyHandle: { apiKey: string; release: () => void } | null = null;
+      try {
+        keyHandle = await this.keyService.acquireKey(job.provider, runtime.apiKey);
+      } catch {
+        if (runtime.apiKey) {
+          keyHandle = { apiKey: runtime.apiKey, release: () => {} };
+        }
+      }
+
+      if (!keyHandle || !keyHandle.apiKey) {
         await this.fail(claimed._id, 'auth', `${runtime.adapter.name} is ${runtime.state}; add its API key and retry`);
         return { kind: 'done' };
       }
       if (!(await reserveRequest(job.provider, runtime.limits.dailyLimit))) {
+        keyHandle.release();
         await this.fail(
           claimed._id,
           'quota_exhausted',
@@ -433,7 +461,7 @@ export class EnrichmentService {
       try {
         const finding = await runtime.adapter.lookup(
           { value: claimed.value, type: claimed.type },
-          { apiKey: runtime.apiKey, http: runtime.http },
+          { apiKey: keyHandle.apiKey, http: runtime.http, options: { includeReanalysis: batch?.includeReanalysis } },
         );
         const now = new Date();
         await EnrichmentResult.updateOne(
@@ -478,6 +506,8 @@ export class EnrichmentService {
         }
         await this.fail(claimed._id, kind, e.message, e.options.httpStatus);
         return { kind: 'done' };
+      } finally {
+        keyHandle.release();
       }
     } catch (err) {
       // Database or programming error: record it so the batch can still finish.

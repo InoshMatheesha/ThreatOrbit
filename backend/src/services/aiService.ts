@@ -328,83 +328,64 @@ function normalizeConfidence(val: unknown): 'low' | 'medium' | 'high' {
 }
 
 export function normalizeBatchExplanation(raw: unknown, top: Array<{ value: string }> = []): BatchExplanation {
-  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return batchSchema.parse(raw);
+  }
+  const obj = raw as Record<string, unknown>;
 
-  const headline =
-    normalizeString(obj.headline) ||
-    normalizeString(obj.title) ||
-    'Security Batch Assessment';
-
-  const overview =
-    normalizeString(obj.overview) ||
-    normalizeString(obj.summary) ||
-    normalizeString(obj.description) ||
-    'Analysis of the submitted batch indicators.';
-
-  const keyPoints = normalizeArray(obj.keyPoints ?? obj.key_points ?? obj.points ?? obj.highlights);
-  const nextSteps = normalizeArray(obj.nextSteps ?? obj.next_steps ?? obj.recommendations ?? obj.actions);
-
-  const rawIndicators = Array.isArray(obj.indicators)
-    ? obj.indicators
-    : Array.isArray(obj.results)
-      ? obj.results
-      : [];
+  const headline = normalizeString(obj.headline ?? obj.title);
+  const overview = normalizeString(obj.overview ?? obj.summary ?? obj.description);
+  const rawKeyPoints = obj.keyPoints ?? obj.key_points ?? obj.points ?? obj.highlights;
+  const rawNextSteps = obj.nextSteps ?? obj.next_steps ?? obj.recommendations ?? obj.actions;
+  const rawIndicators = obj.indicators ?? obj.results;
 
   const order = new Map(top.map((v, i) => [v.value, i]));
 
-  const indicators = rawIndicators
-    .map((ind: unknown, idx: number) => {
-      const i = (ind && typeof ind === 'object' ? ind : {}) as Record<string, unknown>;
-      const fallbackValue = top[idx]?.value ?? '';
-      const value = normalizeString(i.value) || normalizeString(i.indicator) || fallbackValue;
-      return {
-        value,
-        headline: normalizeString(i.headline) || normalizeString(i.title) || 'Indicator assessment',
-        explanation:
-          normalizeString(i.explanation) ||
-          normalizeString(i.summary) ||
-          normalizeString(i.description) ||
-          'Examined against threat intelligence sources.',
-        nextSteps: normalizeArray(i.nextSteps ?? i.next_steps ?? i.recommendations),
-      };
-    })
-    .filter((i) => order.has(i.value))
-    .sort((a, b) => order.get(a.value)! - order.get(b.value)!);
+  const indicators = Array.isArray(rawIndicators)
+    ? rawIndicators
+        .map((ind: unknown, idx: number) => {
+          const i = (ind && typeof ind === 'object' ? ind : {}) as Record<string, unknown>;
+          const fallbackValue = top[idx]?.value ?? '';
+          const value = normalizeString(i.value ?? i.indicator) || fallbackValue;
+          return {
+            value,
+            headline: normalizeString(i.headline ?? i.title) || 'Indicator assessment',
+            explanation:
+              normalizeString(i.explanation ?? i.summary ?? i.description) ||
+              'Examined against threat intelligence sources.',
+            nextSteps: normalizeArray(i.nextSteps ?? i.next_steps ?? i.recommendations) ?? [],
+          };
+        })
+        .filter((i) => order.has(i.value))
+        .sort((a, b) => order.get(a.value)! - order.get(b.value)!)
+    : undefined;
 
   return batchSchema.parse({
     headline,
     overview,
-    keyPoints: keyPoints.length > 0 ? keyPoints : ['Review flagged high-risk indicators first.'],
-    nextSteps: nextSteps.length > 0 ? nextSteps : ['Monitor organization traffic for these indicators.'],
+    keyPoints: rawKeyPoints !== undefined ? normalizeArray(rawKeyPoints) : undefined,
+    nextSteps: rawNextSteps !== undefined ? normalizeArray(rawNextSteps) : undefined,
     indicators,
   });
 }
 
 export function normalizeItemExplanation(raw: unknown, defaultHeadline = 'Indicator analysis'): ItemExplanation {
-  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return itemSchema.parse(raw);
+  }
+  const obj = raw as Record<string, unknown>;
 
-  const headline =
-    normalizeString(obj.headline) ||
-    normalizeString(obj.title) ||
-    defaultHeadline;
-
-  const whatIsIt =
-    normalizeString(obj.whatIsIt ?? obj.what_is_it ?? obj.description ?? obj.summary) ||
-    'This indicator was examined against threat intelligence services.';
-
-  const whyItMatters =
-    normalizeString(obj.whyItMatters ?? obj.why_it_matters ?? obj.impact ?? obj.risk_summary) ||
-    'Evaluated based on external threat reports and security signals.';
-
-  const confidence = normalizeConfidence(obj.confidence);
-  const nextSteps = normalizeArray(obj.nextSteps ?? obj.next_steps ?? obj.recommendations ?? obj.actions);
+  const headline = normalizeString(obj.headline ?? obj.title) || defaultHeadline;
+  const rawWhat = obj.whatIsIt ?? obj.what_is_it ?? obj.description ?? obj.summary;
+  const rawWhy = obj.whyItMatters ?? obj.why_it_matters ?? obj.impact ?? obj.risk_summary;
+  const rawNextSteps = obj.nextSteps ?? obj.next_steps ?? obj.recommendations ?? obj.actions;
 
   return itemSchema.parse({
     headline,
-    whatIsIt,
-    whyItMatters,
-    confidence,
-    nextSteps: nextSteps.length > 0 ? nextSteps : ['Verify whether any network systems communicated with this address.'],
+    whatIsIt: rawWhat !== undefined ? normalizeString(rawWhat) : undefined,
+    whyItMatters: rawWhy !== undefined ? normalizeString(rawWhy) : undefined,
+    confidence: normalizeConfidence(obj.confidence),
+    nextSteps: rawNextSteps !== undefined ? normalizeArray(rawNextSteps) : undefined,
   });
 }
 

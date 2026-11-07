@@ -48,6 +48,7 @@ export interface BatchDoc {
   label?: string;
   status: BatchStatus;
   mode: ParseMode;
+  includeReanalysis?: boolean;
   source: { kind: 'text' | 'file'; name?: string; bytes?: number };
   createdBy: Actor;
   totals: { indicators: number; eligible: number; ineligible: number; invalid: number; duplicates: number };
@@ -77,6 +78,7 @@ const batchSchema = new Schema<BatchDoc>(
     label: { type: String, maxlength: 120 },
     status: { type: String, enum: BATCH_STATUSES, required: true },
     mode: { type: String, enum: ['lines', 'extract'], required: true },
+    includeReanalysis: { type: Boolean, default: false },
     source: { kind: { type: String, required: true }, name: String, bytes: Number },
     createdBy: { _id: false, id: { type: String, required: true }, email: String, name: String },
     totals: { indicators: Number, eligible: Number, ineligible: Number, invalid: Number, duplicates: Number },

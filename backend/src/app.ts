@@ -66,7 +66,7 @@ export function createApp(config: AppConfig, logger: Logger = createLogger(confi
     app.use('/api/auth', authRouter(config, auth));
     app.use('/api', requireAuth);
     app.use('/api/users', usersRouter(logger));
-    if (ai) app.use('/api/settings', settingsRouter(ai));
+    if (ai || enrichment?.keyService) app.use('/api/settings', settingsRouter(ai, enrichment?.keyService));
   }
   if (enrichment) app.post('/api/queue/tick', queueHandlers(config, enrichment).tick);
   app.use('/api/batches', batchesRouter(config, enrichment, ai));

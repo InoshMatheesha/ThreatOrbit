@@ -59,38 +59,46 @@ export class DatabaseLookupQueue implements LookupQueue {
   }
 
   private async drainProvider(provider: ProviderId, limits: ProviderLimits, deadline: number): Promise<number> {
-    let processed = 0;
-    while (Date.now() < deadline) {
-      const pause = await ProviderPause.findOne({ provider }).lean();
-      if (pause && pause.pausedUntil > new Date()) break;
+    const concurrency = Math.max(1, limits.concurrency || 1);
 
-      const now = new Date();
-      const next = await EnrichmentResult.findOne(
-        {
-          provider,
-          status: 'queued',
-          $or: [{ nextAttemptAt: { $exists: false } }, { nextAttemptAt: null }, { nextAttemptAt: { $lte: now } }],
-        },
-        { _id: 1, batchId: 1, attempts: 1 },
-      )
-        .sort({ createdAt: 1 })
-        .lean();
-      if (!next) break;
-      if (!(await this.reserveSlot(provider, limits.requestsPerMinute))) break;
+    const runWorker = async (): Promise<number> => {
+      let count = 0;
+      while (Date.now() < deadline) {
+        const pause = await ProviderPause.findOne({ provider }).lean();
+        if (pause && pause.pausedUntil > new Date()) break;
 
-      const outcome = await this.processor!({ resultId: String(next._id), batchId: next.batchId, provider, attempt: next.attempts + 1 });
-      processed++;
-      if (outcome.kind === 'retry' && outcome.pauseProviderMs) {
-        await ProviderPause.updateOne(
-          { provider },
-          { $set: { pausedUntil: new Date(Date.now() + outcome.pauseProviderMs) } },
-          { upsert: true },
-        );
-        break;
+        const now = new Date();
+        const next = await EnrichmentResult.findOne(
+          {
+            provider,
+            status: 'queued',
+            $or: [{ nextAttemptAt: { $exists: false } }, { nextAttemptAt: null }, { nextAttemptAt: { $lte: now } }],
+          },
+          { _id: 1, batchId: 1, attempts: 1 },
+        )
+          .sort({ createdAt: 1 })
+          .lean();
+        if (!next) break;
+        if (!(await this.reserveSlot(provider, limits.requestsPerMinute))) break;
+
+        const outcome = await this.processor!({ resultId: String(next._id), batchId: next.batchId, provider, attempt: next.attempts + 1 });
+        count++;
+        if (outcome.kind === 'retry' && outcome.pauseProviderMs) {
+          await ProviderPause.updateOne(
+            { provider },
+            { $set: { pausedUntil: new Date(Date.now() + outcome.pauseProviderMs) } },
+            { upsert: true },
+          );
+          break;
+        }
       }
-    }
-    if (processed) this.logger.debug({ provider, processed }, 'Drained lookups');
-    return processed;
+      return count;
+    };
+
+    const counts = await Promise.all(Array.from({ length: concurrency }, () => runWorker()));
+    const totalProcessed = counts.reduce((a, b) => a + b, 0);
+    if (totalProcessed) this.logger.debug({ provider, processed: totalProcessed, concurrency }, 'Drained lookups');
+    return totalProcessed;
   }
 
   /** Atomically take one request slot in the provider's current one-minute window. */

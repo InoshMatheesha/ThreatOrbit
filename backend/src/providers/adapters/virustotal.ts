@@ -49,15 +49,34 @@ export const virusTotal: ProviderAdapter = {
   defaultLimits: { requestsPerMinute: 4, dailyLimit: 500, concurrency: 1 },
   probe: { value: '8.8.8.8', type: 'ipv4' },
 
-  async lookup(indicator, { apiKey, http }): Promise<ProviderFinding> {
+  async lookup(indicator, { apiKey, http, options }): Promise<ProviderFinding> {
     const { api, gui } = pathFor(indicator.type, indicator.value);
+    let reanalysisRequested = false;
+
+    // VirusTotal Reanalysis Integration: if opted in, submit indicator for reanalysis
+    if (options?.includeReanalysis) {
+      try {
+        const reRes = await http.request(`${BASE}/${api}/analyse`, {
+          method: 'POST',
+          headers: { 'x-apikey': apiKey },
+        });
+        if (reRes.status === 200 || reRes.status === 201) {
+          reanalysisRequested = true;
+        }
+      } catch {
+        // Fallback to reading the latest available analysis if reanalysis is rate-limited or queued
+      }
+    }
+
     const res = await http.request(`${BASE}/${api}`, { headers: { 'x-apikey': apiKey } });
     if (res.status === 404) {
       return {
         outcome: 'not_found',
         verdict: 'unknown',
         summary: 'Not in the VirusTotal dataset',
-        metrics: {},
+        metrics: compact({
+          reanalysis: reanalysisRequested ? 'Requested' : null,
+        }),
         tags: [],
         references: [],
       };
@@ -89,6 +108,7 @@ export const virusTotal: ProviderAdapter = {
       detections: d,
       metrics: compact({
         sophos: verdict === 'malicious' ? sophosVerdict(attrs.last_analysis_results) : null,
+        reanalysis: reanalysisRequested ? 'Requested' : null,
         reputation: typeof attrs.reputation === 'number' ? attrs.reputation : null,
         lastAnalysis: unixToIso(attrs.last_analysis_date),
         country: str(attrs.country),

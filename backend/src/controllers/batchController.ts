@@ -17,6 +17,7 @@ const createFields = {
   mode: z.enum(PARSE_MODES).default('lines'),
   label: z.string().trim().max(120).optional(),
   acknowledgeThirdPartySharing: booleanish.default(false),
+  includeReanalysis: booleanish.default(false),
 };
 const createJsonSchema = z.strictObject({ text: z.string(), ...createFields });
 const createMultipartSchema = z.strictObject(createFields);
@@ -98,6 +99,7 @@ export function batchHandlers(config: AppConfig, service: EnrichmentService) {
       actor: req.user!,
       source,
       ...(fields.label ? { label: fields.label } : {}),
+      includeReanalysis: fields.includeReanalysis,
     });
     res.status(201).json({ data: publicBatch(batch) });
   };

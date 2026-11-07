@@ -76,9 +76,14 @@ export interface ProviderHttp {
   ): Promise<HttpResponse>;
 }
 
+export interface LookupOptions {
+  includeReanalysis?: boolean;
+}
+
 export interface LookupContext {
   apiKey: string;
   http: ProviderHttp;
+  options?: LookupOptions;
 }
 
 export interface ProviderLimits {

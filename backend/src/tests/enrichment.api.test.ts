@@ -134,14 +134,11 @@ describe('enrichment API', () => {
     expect(csv.status).toBe(200);
     expect(csv.headers['content-type']).toMatch(/text\/csv/);
     expect(csv.headers['content-disposition']).toMatch(/attachment; filename="threatorbit-[0-9a-f]{8}-.*\.csv"/);
-    const lines = csv.text.replace(/^﻿/, '').trim().split('\r\n');
-    const header = lines[0]!.split(',');
-    expect(header.slice(0, 4)).toEqual(['batch_id', 'indicator', 'type', 'risk']);
-    // One row per indicator x provider: IP has VT + AbuseIPDB, domain has VT only.
-    expect(lines).toHaveLength(4);
-    const ipRows = lines.filter((l) => l.includes(',45.33.32.156,'));
-    expect(ipRows).toHaveLength(2);
-    expect(ipRows.some((r) => r.includes(',virustotal,completed,found,malicious,9/90 engines malicious,9,90,'))).toBe(true);
+    const lines = csv.text.replace(/^\uFEFF/, '').trim().split('\r\n');
+    expect(lines[0]).toBe('indicator,Virus total count,total_engines,abuse_confidence,sophos detection');
+    expect(lines).toHaveLength(3);
+    const ipRow = lines.find((l) => l.startsWith('45.33.32.156'));
+    expect(ipRow).toBe('45.33.32.156,9,90,0,');
 
     const json = await agent.get(`/api/exports/${id}?format=json`);
     const body = JSON.parse(json.text);
