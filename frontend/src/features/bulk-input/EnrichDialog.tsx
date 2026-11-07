@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ErrorBanner, Modal, Notice, Spinner } from '../../components/ui';
+import { ActiveKeys, ErrorBanner, Modal, Notice, Spinner } from '../../components/ui';
 import { api, createBatch, TYPE_LABELS, type ParseMode, type PreviewResult, type ProviderInfo } from '../../lib/api';
 import { duration } from '../../lib/format';
 import { Link, navigate } from '../../lib/router';
@@ -124,7 +124,8 @@ export function EnrichDialog({ input, mode, preview, onClose }: Props) {
                     {p.name}
                     {reanalysing && <span className="ml-2 chip bg-brand-soft !text-[10.5px] text-brand">rescan</span>}
                   </span>
-                  <span className="text-muted tabular-nums">
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted tabular-nums">
+                    {p.keyCount !== undefined && <ActiveKeys count={p.keyCount} showLabel={false} />}
                     {count} lookups · {count ? duration(minutes) : 'nothing supported'} ·{' '}
                     {overQuota ? (
                       <span className="text-medium">only {remainingToday} left today</span>
@@ -164,13 +165,12 @@ export function EnrichDialog({ input, mode, preview, onClose }: Props) {
                 onChange={(e) => setIncludeReanalysis(e.target.checked)}
                 className="mt-1 h-4 w-4 accent-[var(--c-brand)]"
               />
-              <span>
+              <span
+                title={`Asks ${reanalysisProvider.name} to rescan each indicator it already knows and waits for the fresh verdict. Unknown indicators are never submitted. For URLs and domains the rescan makes scanners contact the target, which its operator may notice.`}
+              >
                 <span className="block font-medium">Include Reanalysis</span>
                 <span className="mt-0.5 block text-muted">
-                  Asks {reanalysisProvider.name} to rescan every indicator it already knows and waits for the fresh verdict, instead of
-                  returning its last stored analysis. Slower, and uses about 2 to 3 {reanalysisProvider.name} requests per indicator instead
-                  of 1. Unknown indicators are never submitted. For URLs and domains, the rescan makes scanners contact the target, which
-                  its operator may notice.
+                  Fresh {reanalysisProvider.name} rescan instead of its stored verdict — slower, about 3x the requests.
                 </span>
               </span>
             </label>
@@ -195,10 +195,9 @@ export function EnrichDialog({ input, mode, preview, onClose }: Props) {
                 onChange={(e) => setAcknowledged(e.target.checked)}
                 className="mt-1 h-4 w-4 accent-[var(--c-brand)]"
               />
-              <span>
-                I understand these {eligible.length} indicators will be sent to the services listed above, and none of them are confidential
-                (internal hostnames, customer data in URLs, unreleased sample hashes). Private IPs and internal domains are already
-                excluded.
+              <span title="Confidential means internal hostnames, customer data in URLs or unreleased sample hashes. Private IPs and internal domains are excluded automatically.">
+                These {eligible.length} indicator{eligible.length === 1 ? '' : 's'} will be sent to the sources above, and none are
+                confidential.
               </span>
             </label>
           </Notice>

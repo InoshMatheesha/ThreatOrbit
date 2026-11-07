@@ -212,6 +212,18 @@ body {
     opacity: 1;
   }
 }
+/* One dot per API key in rotation; the stagger reads as several workers running at once. */
+@keyframes key-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.72);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
 @keyframes shimmer {
   to {
     background-position: -200% 0;
@@ -239,6 +251,9 @@ body {
 /* Rows settle in as a page of results arrives; the delay is staggered inline, capped so a full page never feels slow. */
 .animate-row {
   animation: rise 0.3s ease backwards;
+}
+.animate-key-pulse {
+  animation: key-pulse 1.8s ease-in-out infinite;
 }
 .skeleton {
   background: linear-gradient(90deg, var(--c-raised) 25%, var(--c-line) 37%, var(--c-raised) 63%);

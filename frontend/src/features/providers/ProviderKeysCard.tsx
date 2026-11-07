@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { CheckIcon, KeyIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from '../../components/icons';
-import { Empty, ErrorBanner, Notice, Skeleton, Spinner } from '../../components/ui';
+import { ActiveKeys, Empty, ErrorBanner, Notice, Skeleton, Spinner } from '../../components/ui';
 import { api, type ProviderId, type ProviderInfo, type ProviderKey, type ProviderKeyStatus } from '../../lib/api';
 import { relativeTime } from '../../lib/format';
 
@@ -105,7 +105,8 @@ export function ProviderKeysCard({ providers, onChange }: Props) {
             <div key={provider.id}>
               <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
                 <span className="font-semibold">{names.get(provider.id)}</span>
-                <span className="text-[12px] text-muted tabular-nums">
+                <span className="flex items-center gap-2 text-[12px] text-muted tabular-nums">
+                  <ActiveKeys count={list.filter((k) => k.status === 'ok').length} showLabel={false} />
                   {list.filter((k) => k.status === 'ok').length} in rotation · {provider.limits.requestsPerMinute}/min combined
                 </span>
               </div>
@@ -343,7 +344,10 @@ function KeyRow({ k, onChanged }: { k: ProviderKey; onChanged: () => Promise<voi
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold">{k.label}</span>
             <code className="font-mono text-[12px] text-muted">{k.keyHint}</code>
-            <span className={`badge ${status.className}`}>{status.label}</span>
+            <span className={`badge ${status.className}`}>
+              {k.status === 'ok' && <span className="h-1.5 w-1.5 rounded-full bg-low animate-key-pulse" aria-hidden />}
+              {status.label}
+            </span>
             {env && <span className="badge bg-unknown-soft text-unknown">Environment</span>}
           </div>
           <div className="mt-0.5 text-[12px] text-muted tabular-nums">

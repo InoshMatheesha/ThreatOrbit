@@ -10,16 +10,19 @@ const TEST_COOLDOWN_MS = 15_000;
 export function providerHandlers(service: EnrichmentService) {
   const lastTest = new Map<string, number>();
 
-  /** Provider status for the UI. Exposes state and limits, never credentials; key counts for administrators only. */
-  const list: RequestHandler = async (req, res) => {
+  /**
+   * Provider status for the UI. Exposes state and limits, never credentials. `keyCount` is
+   * sent to everyone signed in: it is how the UI shows what runs in parallel, and it was
+   * already derivable from the published `limits.concurrency`.
+   */
+  const list: RequestHandler = async (_req, res) => {
     await service.refreshProviders();
     const usage = await usageToday();
-    const isAdmin = req.user?.role === 'admin';
     res.json({
       data: service.registry.all().map((r) => ({
         ...service.registry.info(r.adapter.id),
         usedToday: usage.get(r.adapter.id) ?? 0,
-        ...(isAdmin ? { keyCount: r.keyCount } : {}),
+        keyCount: r.keyCount,
       })),
       meta: { queueMode: service.queueMode },
     });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ExternalIcon, KeyIcon, ServerIcon, SparklesIcon } from '../components/icons';
-import { ErrorBanner, Notice, Page, Skeleton, Spinner } from '../components/ui';
+import { ActiveKeys, ErrorBanner, Notice, Page, Skeleton, Spinner } from '../components/ui';
 import { AiSettingsCard } from '../features/ai/AiSettingsCard';
 import { ProviderKeysCard } from '../features/providers/ProviderKeysCard';
 import { api, TYPE_LABELS, type Health, type ProviderInfo } from '../lib/api';
@@ -81,12 +81,10 @@ function ProviderCard({ p, canTest }: { p: ProviderInfo; canTest: boolean }) {
           <span className="text-muted">Speed</span>
           <span className="font-medium tabular-nums">{p.limits.requestsPerMinute}/min</span>
         </div>
-        {p.keyCount !== undefined && p.keyCount > 0 && (
-          <div className="flex items-baseline justify-between text-[12px]">
-            <span className="text-muted">API keys</span>
-            <span className="font-medium tabular-nums">
-              {p.keyCount} {p.keyCount === 1 ? 'key' : 'keys in parallel'}
-            </span>
+        {p.keyCount !== undefined && (
+          <div className="flex items-center justify-between text-[12px]">
+            <span className="text-muted">{p.keyCount > 1 ? 'Keys in parallel' : 'API keys'}</span>
+            <ActiveKeys count={p.keyCount} />
           </div>
         )}
       </div>
@@ -216,7 +214,7 @@ export function ProvidersPage() {
         <Section
           icon={<KeyIcon size={16} />}
           title="API keys"
-          hint="Administrators only. More keys per source means more lookups per minute."
+          hint={`${providers.reduce((n, p) => n + (p.keyCount ?? 0), 0)} key(s) in rotation. More keys per source means more lookups per minute.`}
         >
           <ProviderKeysCard providers={providers} onChange={reloadProviders} />
         </Section>

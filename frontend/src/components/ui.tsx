@@ -368,6 +368,45 @@ export function BatchStatusBadge({ status }: { status: BatchStatus }) {
   );
 }
 
+const MAX_KEY_DOTS = 5;
+
+/**
+ * The API keys a source is currently looking up with, one pulsing dot each. Lookups run one
+ * worker per key, so the row of dots is a direct picture of how much runs in parallel.
+ */
+export function ActiveKeys({ count, showLabel = true, className = '' }: { count: number; showLabel?: boolean; className?: string }) {
+  if (count <= 0) {
+    return (
+      <span className={`inline-flex items-center gap-1.5 text-[11px] text-muted ${className}`}>
+        <span className="h-1.5 w-1.5 rounded-full bg-unknown" aria-hidden />
+        No key
+      </span>
+    );
+  }
+  const dots = Math.min(count, MAX_KEY_DOTS);
+  const label = `${count} API key${count === 1 ? '' : 's'} in rotation`;
+  return (
+    <span className={`inline-flex items-center gap-1.5 ${className}`} title={label}>
+      <span className="inline-flex items-center gap-[3px]" role="img" aria-label={label}>
+        {Array.from({ length: dots }, (_, i) => (
+          <span
+            key={i}
+            className="h-1.5 w-1.5 rounded-full bg-low animate-key-pulse"
+            style={{ animationDelay: `${i * 190}ms` }}
+            aria-hidden
+          />
+        ))}
+        {count > MAX_KEY_DOTS && <span className="ml-0.5 text-[10px] text-muted tabular-nums">+{count - MAX_KEY_DOTS}</span>}
+      </span>
+      {showLabel && (
+        <span className="text-[11px] text-muted tabular-nums">
+          {count} key{count === 1 ? '' : 's'}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function ProgressBar({
   done,
   failed = 0,

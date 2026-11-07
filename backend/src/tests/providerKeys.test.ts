@@ -84,9 +84,11 @@ describe('provider key administration', () => {
     expect((await analyst.patch('/api/settings/provider-keys/env:virustotal').send({ label: 'y' })).status).toBe(403);
     expect((await analyst.delete('/api/settings/provider-keys/env:virustotal')).status).toBe(403);
     expect((await analyst.post('/api/settings/provider-keys/env:virustotal/test')).status).toBe(403);
-    // Analysts see the provider, but not how many keys it has.
+    // Analysts see how many keys run in parallel (the UI shows it, and `limits.concurrency`
+    // already implied it), but never a key itself.
     const providers = await analyst.get('/api/providers');
-    expect(providers.body.data[0].keyCount).toBeUndefined();
+    expect(providers.body.data[0].keyCount).toBe(1);
+    expect(JSON.stringify(providers.body)).not.toContain('test-vt-key-SECRET');
     await h.service.stop();
   });
 
